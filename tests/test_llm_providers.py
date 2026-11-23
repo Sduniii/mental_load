@@ -245,9 +245,9 @@ async def test_antigravity_cli_subprocess_mode(monkeypatch: Any) -> None:
     assert result.provider_used == PROVIDER_ANTIGRAVITY_CLI
     assert captured_cmd[:5] == [
         "/usr/local/bin/agy",
-        "--print",
         "--disable-slash-commands",
         "--model",
         "gemini-4-argon-medium",
+        "--print",
     ]
     assert len(result.hidden_tasks) == 1

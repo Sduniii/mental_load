@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from typing import Any
@@ -48,6 +49,7 @@ def list_agy_models(agy_bin: str) -> list[str]:
         [agy_bin, "models"],
         capture_output=True,
         text=True,
+        cwd=tempfile.gettempdir(),
         timeout=30,
         check=False,
     )
@@ -68,14 +70,15 @@ def run_agy_prompt(agy_bin: str, model: str, prompt: str, timeout: int = 90) -> 
     proc = subprocess.run(
         [
             agy_bin,
-            "--print",
             "--disable-slash-commands",
             "--model",
             model,
+            "--print",
             prompt,
         ],
         capture_output=True,
         text=True,
+        cwd=tempfile.gettempdir(),
         timeout=timeout,
         check=False,
     )

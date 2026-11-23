@@ -123,7 +123,10 @@ class LLMProviderClient:
         model = str(config.get(CONF_MODEL) or DEFAULT_MODELS.get(provider, ""))
         api_key = str(config.get(CONF_API_KEY) or "").strip()
         temperature = float(config.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE))
-        base_url = str(config.get(CONF_BASE_URL) or DEFAULT_BASE_URLS.get(provider, "")).rstrip("/")
+        base_url = str(
+            config.get(CONF_BASE_URL)
+            or ("" if provider == PROVIDER_ANTIGRAVITY_CLI else DEFAULT_BASE_URLS.get(provider, ""))
+        ).rstrip("/")
 
         if provider == PROVIDER_ANTIGRAVITY_CLI:
             return await self._call_antigravity_cli(
@@ -325,10 +328,10 @@ class LLMProviderClient:
         combined_prompt = f"{system_prompt}\n\n{user_prompt}"
         cmd = [
             agy_bin,
-            "--print",
             "--disable-slash-commands",
             "--model",
             model,
+            "--print",
             combined_prompt,
         ]
         proc = await asyncio.create_subprocess_exec(

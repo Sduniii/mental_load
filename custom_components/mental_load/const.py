@@ -46,6 +46,7 @@ DEFAULT_MODELS: dict[str, str] = {
 }
 
 DEFAULT_BASE_URLS: dict[str, str] = {
+    PROVIDER_ANTIGRAVITY_CLI: "http://192.168.1.106:11435/v1",
     PROVIDER_OPENAI: "https://api.openai.com/v1",
     PROVIDER_ANTHROPIC: "https://api.anthropic.com/v1",
     PROVIDER_MISTRAL: "https://api.mistral.ai/v1",
