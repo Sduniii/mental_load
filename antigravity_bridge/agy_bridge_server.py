@@ -36,7 +36,10 @@ import urllib.request
 import uuid
 from typing import Any
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\r")
+ANSI_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?<>]*[ -/]*[@-~]|\r")
+OSC8_OAUTH_RE = re.compile(
+    r"\x1b\]8;[^;]*;(https://accounts\.google\.com/o/oauth2/auth[^\x07\x1b]+)"
+)
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 11435
 DEFAULT_MODEL = "gemini-3.8-flash-medium"
@@ -164,8 +167,13 @@ def import_session_bundle(bundle_b64: str, home_dir: Path | None = None) -> list
 
 
 def extract_oauth_url(text: str) -> str:
-    """Extract wrapped Google OAuth URL from agy TUI box output."""
-    lines = text.splitlines()
+    """Extract clean single Google OAuth URL from agy OSC-8 or wrapped TUI output."""
+    osc_match = OSC8_OAUTH_RE.search(text)
+    if osc_match:
+        return osc_match.group(1).strip()
+
+    cleaned = ANSI_RE.sub("", text)
+    lines = cleaned.splitlines()
     collecting = False
     chunks: list[str] = []
     for raw in lines:
@@ -251,6 +259,10 @@ class InteractiveLoginManager:
     def read_output(self) -> str:
         with self._lock:
             return ANSI_RE.sub("", self._output)
+
+    def read_raw_output(self) -> str:
+        with self._lock:
+            return self._output
 
     def stop(self) -> None:
         if self._proc and self._proc.poll() is None:
@@ -450,7 +462,8 @@ class AgyBridgeHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/login/output":
             out = LOGIN_MANAGER.read_output()
-            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(out)})
+            raw = LOGIN_MANAGER.read_raw_output()
+            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(raw)})
             return
         if path in ("/v1/models", "/models"):
             if not self._check_auth():
@@ -483,12 +496,14 @@ class AgyBridgeHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/login/start":
             out = LOGIN_MANAGER.start(self.agy_bin)
-            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(out)})
+            raw = LOGIN_MANAGER.read_raw_output()
+            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(raw)})
             return
         if path == "/api/login/input":
             body = self._read_json_body()
             out = LOGIN_MANAGER.send_input(str(body.get("text", "")))
-            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(out)})
+            raw = LOGIN_MANAGER.read_raw_output()
+            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(raw)})
             return
         if path == "/api/login/stop":
             LOGIN_MANAGER.stop()

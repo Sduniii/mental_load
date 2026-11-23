@@ -280,3 +280,13 @@ def test_extract_wrapped_oauth_url() -> None:
         "────────\n"
     )
     assert extract_oauth_url(sample) == "https://accounts.google.com/o/oauth2/auth?access_type=offline&prompt=consent&state=XYZ"
+
+    osc8 = (
+        "\x1b]8;id=123;https://accounts.google.com/o/oauth2/auth?scope=a+b&state=1\x07"
+        "https://accounts.google.com/o/oauth2/auth?scope=a\x1b]8;;\x07\n"
+        "\x1b]8;id=123;https://accounts.google.com/o/oauth2/auth?scope=a+b&state=1\x07"
+        "+b&state=1\x1b]8;;\x07\n"
+    )
+    extracted = extract_oauth_url(osc8)
+    assert extracted == "https://accounts.google.com/o/oauth2/auth?scope=a+b&state=1"
+    assert extracted.count("scope=") == 1
