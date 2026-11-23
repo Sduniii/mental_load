@@ -78,6 +78,11 @@
           "weight_ha_context": "Gewichtung Faktor 4: Live-HA-Kontext",
           "weight_hidden_work": "Gewichtung Faktor 5: Unsichtbare Kopfarbeit",
           "context_todos": "Verknüpfte To-Do-Listen",
+          "project_baseline_per_item": "Grundlast pro offenem Projekt-To-Do (%)",
+          "project_baseline_cap": "Max. täglicher Grundlast-Deckel (%)",
+          "project_planning_enabled": "Große To-Dos aufschlüsseln & auf ruhige Tage/Wochenenden planen",
+          "max_project_steps_weekend": "Max. Projekt-Etappen pro Wochenendtag (So nur ruhige/ohne Geschäfte)",
+          "max_project_steps_weekday": "Max. Projekt-Etappen an freien Werktagen (nach 17:00)",
           "context_energy_sensor": "Schlaf- / Energie-Sensor",
           "context_weather": "Wetter-Entität"
         }

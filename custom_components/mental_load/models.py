@@ -73,7 +73,7 @@ class HiddenTask:
     uid: str
     parent_event_summary: str
     title: str
-    category: str  # "prep" | "followup" | "travel" | "packing" | "mental_note"
+    category: str  # "prep" | "followup" | "travel" | "packing" | "mental_note" | "project_step"
     start: datetime.datetime
     end: datetime.datetime
     load_contribution: int = 10
@@ -81,7 +81,9 @@ class HiddenTask:
     parent_event_date: str = ""
     scheduled_date: str = ""
     lead_days: int = 0
-    placement_mode: str = "same_day"  # "same_day" | "previous_evening" | "load_balanced"
+    placement_mode: str = "same_day"  # "same_day" | "previous_evening" | "load_balanced" | "free_slot"
+    requires_open_business: bool = False
+    is_noisy: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +99,8 @@ class HiddenTask:
             "scheduled_date": self.scheduled_date or self.start.date().isoformat(),
             "lead_days": self.lead_days,
             "placement_mode": self.placement_mode,
+            "requires_open_business": self.requires_open_business,
+            "is_noisy": self.is_noisy,
         }
 
     @classmethod
@@ -116,6 +120,8 @@ class HiddenTask:
             scheduled_date=str(data.get("scheduled_date") or default_d),
             lead_days=int(data.get("lead_days", 0)),
             placement_mode=str(data.get("placement_mode", "same_day")),
+            requires_open_business=bool(data.get("requires_open_business", False)),
+            is_noisy=bool(data.get("is_noisy", False)),
         )
 
 
@@ -136,6 +142,8 @@ class DayLoadAnalysis:
     cached: bool = False
     base_score: int = 0
     relief_points: int = 0
+    project_baseline_load: int = 0
+    open_project_count: int = 0
     linked_prep_tasks: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -153,6 +161,8 @@ class DayLoadAnalysis:
             "cached": self.cached,
             "base_score": self.base_score or self.score,
             "relief_points": self.relief_points,
+            "project_baseline_load": self.project_baseline_load,
+            "open_project_count": self.open_project_count,
             "linked_prep_tasks": [dict(item) for item in self.linked_prep_tasks],
         }
 
@@ -180,6 +190,8 @@ class DayLoadAnalysis:
             cached=bool(data.get("cached", False)),
             base_score=int(data.get("base_score", score_val)),
             relief_points=int(data.get("relief_points", 0)),
+            project_baseline_load=int(data.get("project_baseline_load", 0)),
+            open_project_count=int(data.get("open_project_count", 0)),
             linked_prep_tasks=[dict(item) for item in data.get("linked_prep_tasks", [])],
         )
 

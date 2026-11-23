@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.6.0] — 2026-11-23
+
+### Added
+- **24/7 Anytype ↔ Home Assistant Sync Worker (`services/anytype_ha_sync/`):** Headless Docker service syncing Anytype tasks (`Hausbau` space) bidirectionally into a native Home Assistant `local_todo` entity (`todo.hausbau_anytype`) via `[ANYTYPE-<id>]` markers without duplicates.
+- **Capped Daily Project Baseline Load (`project_baseline_load`):** Ongoing unscheduled items from `CONF_CONTEXT_TODOS` contribute a configurable daily background baseline (`+2%` per item, capped at `15%`) across the entire 30-day horizon including empty days, surfaced in sensors and the Lovelace card (`🧱 +15% Projekt-Grundlast`).
+- **Project Sub-Task Decomposition & Strict Sunday Constraint:** Large project To-Dos are broken down into 20–45 min actionable steps (`🔧 Etappe`) scheduled onto calm weekends (up to `2/day`) and free weekday afternoons (`17:15`, max `1/day`), strictly blocking closed businesses/calls and noisy work on Sundays (`weekday == 6`).
+- **Automatic Stale Event Cleanup in External Calendar Sync:** `async_sync_to_external_calendar` now automatically removes outdated `[ML-BADGE-...]` and `[ML-TASK-...]` events from `calendar.mental_load_2` before writing updated analyses.
+
+---
+
 ## [1.5.0] — 2026-11-23
 
 ### Added

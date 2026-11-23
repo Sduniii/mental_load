@@ -1,0 +1,21 @@
+services:
+  anytype-ha-sync:
+    build: .
+    image: ${DOCKER_REGISTRY:-local}/anytype-ha-sync:latest
+    container_name: anytype-ha-sync
+    restart: unless-stopped
+    environment:
+      ANYTYPE_SPACE_ID: "${ANYTYPE_SPACE_ID:-space_test_id}"
+      ANYTYPE_INVITE_URL: "${ANYTYPE_INVITE_URL:-}"
+      ANYTYPE_API_KEY: "${ANYTYPE_API_KEY:-}"
+      HA_URL: "${HA_URL}"
+      HA_TOKEN: "${HA_TOKEN}"
+      HA_TODO_ENTITY: "${HA_TODO_ENTITY:-todo.hausbau_anytype}"
+      SYNC_INTERVAL_SECONDS: "${SYNC_INTERVAL_SECONDS:-300}"
+    volumes:
+      - anytype-ha-sync-data:/root/.anytype
+      - anytype-ha-sync-config:/root/.config/anytype
+
+volumes:
+  anytype-ha-sync-data:
+  anytype-ha-sync-config:

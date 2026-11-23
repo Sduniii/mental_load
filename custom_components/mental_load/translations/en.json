@@ -78,6 +78,11 @@
           "weight_ha_context": "Weight Factor 4: Live HA Context",
           "weight_hidden_work": "Weight Factor 5: Invisible Head Work",
           "context_todos": "Linked To-Do Lists",
+          "project_baseline_per_item": "Daily Baseline Load per Open Project Item (%)",
+          "project_baseline_cap": "Max Daily Baseline Load Cap (%)",
+          "project_planning_enabled": "Break down large To-Dos onto calm weekdays/weekends",
+          "max_project_steps_weekend": "Max Project Steps per Weekend Day (Sundays quiet-only)",
+          "max_project_steps_weekday": "Max Project Steps on Calm Weekdays (after 17:00)",
           "context_energy_sensor": "Sleep / Energy Sensor",
           "context_weather": "Weather Entity"
         }

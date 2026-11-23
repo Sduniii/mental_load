@@ -11,9 +11,15 @@ from custom_components.mental_load.const import (
     CONF_AUTO_PUSH_TODO,
     CONF_AUTO_SYNC_CALENDAR,
     CONF_CALENDARS,
+    CONF_CONTEXT_TODOS,
     CONF_CRITICAL_THRESHOLD,
     CONF_HORIZON_DAYS,
+    CONF_MAX_PROJECT_STEPS_WEEKDAY,
+    CONF_MAX_PROJECT_STEPS_WEEKEND,
     CONF_NOTIFY_SERVICE,
+    CONF_PROJECT_BASELINE_CAP,
+    CONF_PROJECT_BASELINE_PER_ITEM,
+    CONF_PROJECT_PLANNING_ENABLED,
     CONF_PROVIDER,
     CONF_REACTION_ENTITY,
     CONF_REACTION_ON_CRITICAL,
@@ -385,3 +391,156 @@ async def test_30_day_horizon_major_event_7_to_14_day_lead_and_empty_fast_path()
     lead_actual = (major_day - placed_days[0].date).days
     assert 7 <= lead_actual <= 14
     assert len(coord.data[major_day.isoformat()].linked_prep_tasks) == 1
+
+
+async def test_project_baseline_load_capped_and_drops_when_completed() -> None:
+    hass = FakeHass()
+    hass.services.set_response("calendar", "get_events", {"calendar.google": {"events": []}})
+    todo_items = [{"summary": f"Hausbau Projekt {i}", "status": "needs_action"} for i in range(10)]
+    hass.services.set_response(
+        "todo",
+        "get_items",
+        {"todo.hausbau_anytype": {"items": todo_items}},
+    )
+
+    entry = ConfigEntry(
+        entry_id="baseline_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google"],
+            CONF_CONTEXT_TODOS: ["todo.hausbau_anytype"],
+            CONF_HORIZON_DAYS: 7,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_PROJECT_BASELINE_PER_ITEM: 2.0,
+            CONF_PROJECT_BASELINE_CAP: 15,
+            CONF_PROJECT_PLANNING_ENABLED: False,
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    await coord.async_config_entry_first_refresh()
+
+    empty_future_day = coord.data["2026-11-26"]
+    assert empty_future_day.project_baseline_load == 15
+    assert empty_future_day.open_project_count == 10
+    assert empty_future_day.score == 15
+
+    # When all todos are finished, baseline drops back to 0 without re-running daily LLM cache
+    hass.services.set_response("todo", "get_items", {"todo.hausbau_anytype": {"items": []}})
+    await coord.async_refresh()
+    cleared_day = coord.data["2026-11-26"]
+    assert cleared_day.project_baseline_load == 0
+    assert cleared_day.open_project_count == 0
+    assert cleared_day.score == 0
+
+
+async def test_project_breakdown_weekend_limit_and_sunday_quiet_rule() -> None:
+    hass = FakeHass()
+    hass.services.set_response("calendar", "get_events", {"calendar.google": {"events": []}})
+    hass.services.set_response(
+        "todo",
+        "get_items",
+        {
+            "todo.hausbau_anytype": {
+                "items": [
+                    {"summary": "Hänger TÜV", "status": "needs_action"},
+                    {"summary": "OG: Schleifen Balken", "status": "needs_action"},
+                    {"summary": "Baumarkt Holz kaufen", "status": "needs_action"},
+                    {"summary": "Heizkreis-Layout OG entwerfen", "status": "needs_action"},
+                ]
+            }
+        },
+    )
+
+    entry = ConfigEntry(
+        entry_id="sunday_rule_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google"],
+            CONF_CONTEXT_TODOS: ["todo.hausbau_anytype"],
+            CONF_HORIZON_DAYS: 7,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_PROJECT_BASELINE_PER_ITEM: 2.0,
+            CONF_PROJECT_BASELINE_CAP: 15,
+            CONF_PROJECT_PLANNING_ENABLED: True,
+            CONF_MAX_PROJECT_STEPS_WEEKEND: 2,
+            CONF_MAX_PROJECT_STEPS_WEEKDAY: 1,
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    await coord.async_config_entry_first_refresh()
+
+    # 2026-11-28 is Saturday -> max 2 steps (can include open business / noisy work)
+    saturday = coord.data["2026-11-28"]
+    sat_steps = [t for t in saturday.hidden_tasks if t.category == "project_step"]
+    assert len(sat_steps) <= 2
+
+    # 2026-11-29 is Sunday -> strictly NO open business, calls, shopping, or noisy work!
+    sunday = coord.data["2026-11-29"]
+    sun_steps = [t for t in sunday.hidden_tasks if t.category == "project_step"]
+    assert len(sun_steps) <= 2
+    for step in sun_steps:
+        assert step.requires_open_business is False
+        assert step.is_noisy is False
+        lowered = f"{step.title} {step.parent_event_summary}".lower()
+        assert "schleifen" not in lowered
+        assert "baumarkt" not in lowered
+
+    # Calm weekday steps only start at or after 17:00
+    for day in coord.data.values():
+        if day.date.weekday() < 5:
+            wd_steps = [t for t in day.hidden_tasks if t.category == "project_step"]
+            assert len(wd_steps) <= 1
+            for step in wd_steps:
+                assert step.start.hour >= 17
+
+
+async def test_external_calendar_sync_deletes_stale_badges_and_tasks() -> None:
+    hass = FakeHass()
+    today = datetime.date(2026, 11, 23)
+
+    def _cal_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get("entity_id") == "calendar.mental_load_2":
+            return {
+                "calendar.mental_load_2": {
+                    "events": [
+                        {
+                            "summary": "🟢 3% Mental Load (Niedrig) – Alt",
+                            "start": today.isoformat(),
+                            "end": (today + datetime.timedelta(days=1)).isoformat(),
+                            "description": f"Veraltet\n\n[ML-BADGE-{today.isoformat()}]",
+                        },
+                        {
+                            "summary": "🧠 Veraltete Aufgabe",
+                            "start": f"{today.isoformat()}T08:00:00+01:00",
+                            "end": f"{today.isoformat()}T08:20:00+01:00",
+                            "description": "Alt\n\n[ML-TASK-olddeadbeef]",
+                        },
+                        {
+                            "summary": "Privater Kalendereintrag",
+                            "start": f"{today.isoformat()}T12:00:00+01:00",
+                            "end": f"{today.isoformat()}T13:00:00+01:00",
+                            "description": "Manuell erstellt",
+                        },
+                    ]
+                }
+            }
+        return {}
+
+    hass.services.set_response("calendar", "get_events", _cal_handler)
+
+    entry = ConfigEntry(
+        entry_id="cleanup_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google_source"],
+            CONF_HORIZON_DAYS: 1,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_AUTO_SYNC_CALENDAR: True,
+            CONF_TARGET_CALENDAR_ENTITY: "calendar.mental_load_2",
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    coord.data = {today.isoformat(): _make_high_load_analysis(today, score=82)}
+
+    await coord.async_sync_to_external_calendar("calendar.mental_load_2")
+    delete_calls = [c for c in hass.services.calls if c[0] == "calendar" and c[1] == "delete_event"]
+    deleted_summaries = {c[2]["summary"] for c in delete_calls}
+    assert deleted_summaries == {"🟢 3% Mental Load (Niedrig) – Alt", "🧠 Veraltete Aufgabe"}
+    assert "Privater Kalendereintrag" not in deleted_summaries

@@ -170,6 +170,8 @@ class MentalLoadCard extends HTMLElement {
     const hiddenTasks = activeDay.hidden_tasks || [];
     const linkedPrepTasks = activeDay.linked_prep_tasks || [];
     const reliefPoints = Number(activeDay.relief_points) || 0;
+    const projectBaseline = Number(activeDay.project_baseline_load) || 0;
+    const openProjects = Number(activeDay.open_project_count) || 0;
     const recommendations = activeDay.recommendations || [];
 
     const fmtShortDate = (iso) => (iso && iso.length >= 10 ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : iso || "");
@@ -256,6 +258,10 @@ class MentalLoadCard extends HTMLElement {
           display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 99px;
           background: rgba(34,197,94,0.16); color: #22c55e; font-size: 0.75rem; font-weight: 700;
         }
+        .baseline-pill {
+          display: inline-block; margin-top: 4px; margin-right: 6px; padding: 2px 8px; border-radius: 99px;
+          background: rgba(245,158,11,0.16); color: #f59e0b; font-size: 0.75rem; font-weight: 700;
+        }
         .linked-box { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.28); }
         .checklist { display: grid; gap: 5px; }
         .check-row {
@@ -298,6 +304,7 @@ class MentalLoadCard extends HTMLElement {
           <div class="hero-text">
             <div class="badge-title">${activeDay.badge_summary || "Keine Daten"}</div>
             <div class="muted">${activeDay.reasoning || ""}</div>
+            ${projectBaseline > 0 ? `<div class="baseline-pill">🧱 +${projectBaseline}% Projekt-Grundlast (${openProjects} offene Aufgaben)</div>` : ""}
             ${reliefPoints > 0 ? `<div class="relief-pill">✅ -${reliefPoints}% durch erledigte Vorbereitung</div>` : ""}
           </div>
         </div>

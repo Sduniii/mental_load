@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "mental_load"
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 URL_BASE = "/mental_load_card"
 JSMODULES = [
@@ -79,6 +79,11 @@ CONF_WEIGHT_HIDDEN_WORK = "weight_hidden_work"
 CONF_CONTEXT_TODOS = "context_todos"
 CONF_CONTEXT_ENERGY_SENSOR = "context_energy_sensor"
 CONF_CONTEXT_WEATHER = "context_weather"
+CONF_PROJECT_BASELINE_PER_ITEM = "project_baseline_per_item"
+CONF_PROJECT_BASELINE_CAP = "project_baseline_cap"
+CONF_PROJECT_PLANNING_ENABLED = "project_planning_enabled"
+CONF_MAX_PROJECT_STEPS_WEEKEND = "max_project_steps_weekend"
+CONF_MAX_PROJECT_STEPS_WEEKDAY = "max_project_steps_weekday"
 
 # Invisible Head Tasks & Calendar Display
 CONF_SHOW_HIDDEN_TASK_BLOCKS = "show_hidden_task_blocks"
@@ -110,6 +115,11 @@ DEFAULT_USER_PROFILE = (
 DEFAULT_PREP_MINUTES = 20
 DEFAULT_TRAVEL_MINUTES = 25
 DEFAULT_FOLLOWUP_MINUTES = 15
+DEFAULT_PROJECT_BASELINE_PER_ITEM = 2.0
+DEFAULT_PROJECT_BASELINE_CAP = 15
+DEFAULT_PROJECT_PLANNING_ENABLED = True
+DEFAULT_MAX_PROJECT_STEPS_WEEKEND = 2
+DEFAULT_MAX_PROJECT_STEPS_WEEKDAY = 1
 DEFAULT_WARNING_THRESHOLD = 65
 DEFAULT_CRITICAL_THRESHOLD = 80
 

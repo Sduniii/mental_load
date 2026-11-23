@@ -32,8 +32,11 @@ from .models import CalendarEventInput, DayLoadAnalysis, FeedbackEntry
 from .prompt_builder import (
     analyze_day_heuristic,
     build_day_user_prompt,
+    build_project_breakdown_prompt,
     build_system_prompt,
+    decompose_project_todos_heuristic,
     parse_llm_day_response,
+    parse_project_breakdown_response,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -111,6 +114,36 @@ class LLMProviderClient:
                 feedback_history=feedback_history,
                 provider_label=f"{PROVIDER_HEURISTIC}_fallback",
             )
+
+    async def async_breakdown_projects(
+        self,
+        project_items: list[dict[str, str]],
+        config: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Decompose open project To-Dos into small schedulable sub-tasks with fallback."""
+        if not project_items:
+            return []
+        provider = str(config.get(CONF_PROVIDER, PROVIDER_HEURISTIC))
+        if provider == PROVIDER_HEURISTIC:
+            return decompose_project_todos_heuristic(project_items, config)
+
+        system_prompt, user_prompt = build_project_breakdown_prompt(project_items, config)
+        try:
+            raw_response = await self._async_dispatch_provider(
+                provider=provider,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                config=config,
+            )
+            parsed = parse_project_breakdown_response(raw_response, config)
+            return parsed or decompose_project_todos_heuristic(project_items, config)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "LLM provider '%s' failed project breakdown (%s); using heuristic breakdown",
+                provider,
+                err,
+            )
+            return decompose_project_todos_heuristic(project_items, config)
 
     async def _async_dispatch_provider(
         self,

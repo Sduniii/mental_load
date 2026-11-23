@@ -2,6 +2,12 @@
 
 Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Modell deiner Wahl, berechne den täglichen **Mental Load (0–100%)**, mache **unsichtbare Kopf-Aufgaben** direkt in `calendar.mental_load` sichtbar und löse aktive Smart-Home-Reaktionen aus.
 
+## Neu in v1.6.0
+
+- 🧱 **Gedeckelte Projekt-Grundlast:** Offene Dauerprojekte (`todo.hausbau_anytype` o. ä.) erzeugen jeden Tag eine konfigurierbare Grundlast (`+2%` pro offenem Punkt, gedeckelt auf max. `15%`) — auch an terminfreien Tagen.
+- 🔧 **Projekt-Etappen auf ruhige Tage & Sonntags-Regel:** Große To-Dos werden in 20–45-Min.-Schritte auf ruhige Werktags-Feierabende (`17:15`) und Wochenenden (max. `2/Tag`) verteilt — sonntags ausschließlich ruhige Planungs-/Indoor-Aufgaben ohne geöffnete Läden, TÜV, Telefonate oder Lärm.
+- 🧹 **Auto-Bereinigung im Google-Kalender:** Veraltete Mental-Load-Einträge in `calendar.mental_load_2` werden beim Sync automatisch gelöscht.
+
 ## Neu in v1.5.0
 
 - 📅 **30-Tage-Horizont & 7–14 Tage Vorlauf für große Termine:** Geburtstage, Geschenke, Reisen, Einschulung oder Feiern werden 7–14 Tage vorher auf einen ruhigen Tag vorgezogen; leere Zukunftstage sparen sich überflüssige KI-Aufrufe.

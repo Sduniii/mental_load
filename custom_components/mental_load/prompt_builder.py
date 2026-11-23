@@ -13,6 +13,8 @@ from .const import (
     CONF_DEFAULT_PREP_MINUTES,
     CONF_DEFAULT_TRAVEL_MINUTES,
     CONF_LANGUAGE,
+    CONF_PROJECT_BASELINE_CAP,
+    CONF_PROJECT_BASELINE_PER_ITEM,
     CONF_USER_PROFILE,
     CONF_WEIGHT_HA_CONTEXT,
     CONF_WEIGHT_HIDDEN_WORK,
@@ -22,6 +24,8 @@ from .const import (
     DEFAULT_FOLLOWUP_MINUTES,
     DEFAULT_LANGUAGE,
     DEFAULT_PREP_MINUTES,
+    DEFAULT_PROJECT_BASELINE_CAP,
+    DEFAULT_PROJECT_BASELINE_PER_ITEM,
     DEFAULT_TRAVEL_MINUTES,
     DEFAULT_USER_PROFILE,
     FACTOR_HA_CONTEXT,
@@ -47,7 +51,91 @@ CATEGORY_PREFIXES = {
     "packing": "🎒 Einpacken",
     "followup": "📝 Nachbereitung",
     "mental_note": "💭 Kopfarbeit",
+    "project_step": "🔧 Etappe",
 }
+
+OPEN_BUSINESS_KEYWORDS = (
+    "tüv",
+    "baumarkt",
+    "einkauf",
+    "einkaufen",
+    "kaufen",
+    "besorgen",
+    "abholen",
+    "anruf",
+    "anrufen",
+    "telefon",
+    "amt",
+    "behörde",
+    "arzt",
+    "praxis",
+    "werkstatt",
+    "lieferant",
+    "öffnungszeit",
+    "apotheke",
+    "post",
+    "bank",
+    "termin vereinbaren",
+    "termin ausmachen",
+    "handwerker",
+    "garantie",
+    "hänger",
+    "umtauschen",
+    "hardware",
+    "shop",
+    "store",
+    "call ",
+    "errand",
+)
+
+NOISY_WORK_KEYWORDS = (
+    "schleifen",
+    "bohren",
+    "sägen",
+    "fräsen",
+    "flexen",
+    "stemmen",
+    "hämmern",
+    "vertikutieren",
+    "rasenmäh",
+    "mähen",
+    "häckseln",
+    "hochdruckreiniger",
+    "rüttelplatte",
+    "motorsäge",
+    "laubbläser",
+    "kompressor",
+    "baumaschine",
+    "laut",
+    "sand",
+    "grind",
+    "drill",
+    "saw",
+    "mow",
+)
+
+
+def compute_project_baseline(open_count: int, config: dict[str, Any]) -> int:
+    """Return capped daily mental load percentage for ongoing unscheduled project To-Dos."""
+    if open_count <= 0:
+        return 0
+    per_item = max(0.0, float(config.get(CONF_PROJECT_BASELINE_PER_ITEM, DEFAULT_PROJECT_BASELINE_PER_ITEM)))
+    cap = max(0, min(40, int(config.get(CONF_PROJECT_BASELINE_CAP, DEFAULT_PROJECT_BASELINE_CAP))))
+    return min(cap, round(open_count * per_item))
+
+
+def infer_step_sunday_restrictions(
+    text: str,
+    raw_requires_open: Any = None,
+    raw_is_noisy: Any = None,
+) -> tuple[bool, bool]:
+    """Determine whether a project sub-step needs open businesses/calls or makes noise (blocked on Sundays)."""
+    lowered = text.lower()
+    kw_open = any(kw in lowered for kw in OPEN_BUSINESS_KEYWORDS)
+    kw_noisy = any(kw in lowered for kw in NOISY_WORK_KEYWORDS)
+    requires_open = bool(raw_requires_open) or kw_open
+    is_noisy = bool(raw_is_noisy) or kw_noisy
+    return requires_open, is_noisy
 
 
 def get_factor_weights(config: dict[str, Any]) -> dict[str, float]:
@@ -527,7 +615,7 @@ def analyze_day_heuristic(
 
     # Factor 4: Live HA Context (todos, energy/sleep, weather)
     open_todos = ha_context.get("open_todos", [])
-    ha_score = min(60, len(open_todos) * 6)
+    ha_score = 0 if provider_label == "fast_empty_day" else min(30, len(open_todos) * 4)
     energy_raw = str(ha_context.get("energy_sensor", "")).lower()
     m_energy = re.search(r"(\d+(?:\.\d+)?)", energy_raw)
     if m_energy:
@@ -753,3 +841,209 @@ def analyze_day_heuristic(
         cached=False,
         base_score=score,
     )
+
+
+def build_project_breakdown_prompt(
+    project_items: list[dict[str, str]],
+    config: dict[str, Any],
+) -> tuple[str, str]:
+    """Build (system_prompt, user_prompt) to decompose ongoing To-Dos into small weekend/weekday sub-tasks."""
+    language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
+    lang_line = (
+        "Respond strictly in German for all titles and checklist steps."
+        if language.startswith("de")
+        else "Respond strictly in English for all titles and checklist steps."
+    )
+    system_prompt = (
+        "You break large household/renovation/garden/admin To-Do items into realistic 20-45 minute starter steps "
+        "that can be scheduled onto calm weekends or free weekday afternoons.\n"
+        f"{lang_line}\n"
+        "CRITICAL SUNDAY CONSTRAINT: On Sundays in Germany shops, hardware stores (Baumarkt), TÜV, offices, doctors, "
+        "and phone hotlines are CLOSED, and noisy power tools/garden machinery (schleifen, bohren, sägen, vertikutieren, mähen) "
+        "are FORBIDDEN. Therefore mark EVERY step accurately with `requires_open_business` and `is_noisy`.\n"
+        "Return ONLY a single JSON object:\n"
+        '{"steps": [{"source_todo": "<exact summary>", "title": "<short 20-45m step title>", '
+        '"duration_minutes": 30, "load_contribution": 10, '
+        '"requires_open_business": false, "is_noisy": false, '
+        '"checklist": ["<step 1>", "<step 2>"]}]}'
+    )
+
+    lines = []
+    for idx, item in enumerate(project_items[:25], start=1):
+        summary = str(item.get("summary") or "").strip()
+        desc = str(item.get("description") or "").strip()
+        desc_note = f" — Details: {desc[:180]}" if desc else ""
+        lines.append(f"{idx}. {summary}{desc_note}")
+
+    user_prompt = (
+        "Decompose each open project/To-Do below into 1-2 concrete small 20-45 min steps (planning/measuring/quiet indoor prep "
+        "separate from shopping/TÜV/calls or noisy work so calm Sundays can still get quiet prep steps):\n\n"
+        + "\n".join(lines)
+    )
+    return system_prompt, user_prompt
+
+
+def parse_project_breakdown_response(
+    raw_text: str,
+    config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Parse LLM JSON response of project sub-steps and enforce Sunday safety classification."""
+    payload = _extract_json_object(raw_text)
+    raw_steps = payload.get("steps") or []
+    parsed: list[dict[str, Any]] = []
+    for item in raw_steps:
+        if not isinstance(item, dict):
+            continue
+        source_todo = str(item.get("source_todo") or "").strip()
+        raw_title = str(item.get("title") or source_todo).strip()
+        if not raw_title:
+            continue
+        title = _format_task_title(raw_title, "project_step")
+        checklist = [str(c).strip() for c in (item.get("checklist") or []) if str(c).strip()]
+        if not checklist:
+            checklist = [f"20–45 Min. Fokus-Start für: {source_todo or raw_title}"]
+        combined_text = f"{source_todo} {title} {' '.join(checklist)}"
+        req_open, noisy = infer_step_sunday_restrictions(
+            combined_text,
+            raw_requires_open=item.get("requires_open_business"),
+            raw_is_noisy=item.get("is_noisy"),
+        )
+        parsed.append(
+            {
+                "source_todo": source_todo or raw_title,
+                "title": title,
+                "duration_minutes": max(15, min(60, int(item.get("duration_minutes", 30) or 30))),
+                "load_contribution": max(4, min(25, int(item.get("load_contribution", 10) or 10))),
+                "requires_open_business": req_open,
+                "is_noisy": noisy,
+                "checklist": checklist[:4],
+            }
+        )
+    return parsed
+
+
+def decompose_project_todos_heuristic(
+    project_items: list[dict[str, str]],
+    config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Deterministic fallback that decomposes open project To-Dos into 20-45 min starter steps."""
+    language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
+    is_de = language.startswith("de")
+    steps: list[dict[str, Any]] = []
+
+    for item in project_items[:25]:
+        summary = str(item.get("summary") or "").strip()
+        desc = str(item.get("description") or "").strip()
+        if not summary:
+            continue
+        combined = f"{summary} {desc}"
+        req_open, noisy = infer_step_sunday_restrictions(combined)
+
+        # Always generate a quiet planning/prep starter step first (safe for Sunday!)
+        if any(k in combined.lower() for k in ("tüv", "werkstatt", "arzt", "termin")):
+            quiet_title = (
+                f"🔧 Etappe: Unterlagen & Wunschtermin prüfen ({summary})"
+                if is_de
+                else f"🔧 Step: Check documents & preferred dates ({summary})"
+            )
+            quiet_checks = (
+                ["Fahrzeugschein/Papiere bereitlegen", "Mögliche Zeitfenster heraussuchen"]
+                if is_de
+                else ["Gather required papers", "Note preferred time slots"]
+            )
+            steps.append(
+                {
+                    "source_todo": summary,
+                    "title": quiet_title,
+                    "duration_minutes": 20,
+                    "load_contribution": 8,
+                    "requires_open_business": False,
+                    "is_noisy": False,
+                    "checklist": quiet_checks,
+                }
+            )
+            action_title = (
+                f"🔧 Etappe: Termin vereinbaren / erledigen ({summary})"
+                if is_de
+                else f"🔧 Step: Book / complete appointment ({summary})"
+            )
+            action_checks = (
+                ["Öffnungszeiten prüfen und anrufen/hinfahren", "Termin fest im Kalender eintragen"]
+                if is_de
+                else ["Call/visit during opening hours", "Save confirmed slot to calendar"]
+            )
+            steps.append(
+                {
+                    "source_todo": summary,
+                    "title": action_title,
+                    "duration_minutes": 35,
+                    "load_contribution": 12,
+                    "requires_open_business": True,
+                    "is_noisy": False,
+                    "checklist": action_checks,
+                }
+            )
+        elif noisy or any(k in combined.lower() for k in ("og:", "elektrik", "heizung", "bad", "zimmer", "fenster", "abdicht", "fussboden", "strom", "teich", "solar")):
+            plan_title = (
+                f"🔧 Etappe: Nächsten Schritt & Material planen ({summary})"
+                if is_de
+                else f"🔧 Step: Plan next milestone & materials ({summary})"
+            )
+            plan_checks = (
+                ["Ist-Zustand prüfen & Maße/Details notieren", "Fehlende Teile auf Einkaufsliste setzen"]
+                if is_de
+                else ["Check current state & measurements", "List missing supplies"]
+            )
+            steps.append(
+                {
+                    "source_todo": summary,
+                    "title": plan_title,
+                    "duration_minutes": 30,
+                    "load_contribution": 10,
+                    "requires_open_business": False,
+                    "is_noisy": False,
+                    "checklist": plan_checks,
+                }
+            )
+            work_title = (
+                f"🔧 Etappe: 40-Min.-Praxisblock umsetzen ({summary})"
+                if is_de
+                else f"🔧 Step: Execute 40m hands-on block ({summary})"
+            )
+            work_checks = (
+                ["Werkzeug/Material bereitlegen", "Ein abgegrenztes Teilziel sauber fertigstellen"]
+                if is_de
+                else ["Prepare tools/materials", "Finish one bounded sub-task cleanly"]
+            )
+            steps.append(
+                {
+                    "source_todo": summary,
+                    "title": work_title,
+                    "duration_minutes": 40,
+                    "load_contribution": 12,
+                    "requires_open_business": req_open,
+                    "is_noisy": noisy or any(k in combined.lower() for k in ("schleifen", "elektrik", "fenster", "strom")),
+                    "checklist": work_checks,
+                }
+            )
+        else:
+            title = _format_task_title(
+                f"Teil-Schritt: {summary}" if is_de else f"Starter step: {summary}",
+                "project_step",
+            )
+            steps.append(
+                {
+                    "source_todo": summary,
+                    "title": title,
+                    "duration_minutes": 30,
+                    "load_contribution": 10,
+                    "requires_open_business": req_open,
+                    "is_noisy": noisy,
+                    "checklist": (
+                        ["Ersten 30-Min.-Schritt abgrenzen", "Fortschritt kurz in Anytype/To-Do festhalten"]
+                        if is_de
+                        else ["Scope first 30m step", "Update progress note when done"]
+                    ),
+                }
+            )
+    return steps

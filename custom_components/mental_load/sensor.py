@@ -94,6 +94,8 @@ class MentalLoadDaySensor(MentalLoadBaseSensor):
             "level": day.level,
             "base_score": day.base_score or day.score,
             "relief_points": day.relief_points,
+            "project_baseline_load": day.project_baseline_load,
+            "open_project_count": day.open_project_count,
             "badge_summary": day.badge_summary,
             "reasoning": day.reasoning,
             "top_stressor": day.top_stressor,
@@ -138,6 +140,8 @@ class MentalLoadWeekAverageSensor(MentalLoadBaseSensor):
                     "level": d.level,
                     "badge_summary": d.badge_summary,
                     "hidden_tasks_count": len(d.hidden_tasks),
+                    "project_baseline_load": d.project_baseline_load,
+                    "open_project_count": d.open_project_count,
                 }
                 for d in days
             ],

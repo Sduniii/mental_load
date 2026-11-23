@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import json
 import logging
+import re
 import secrets
 from typing import Any
 
@@ -26,8 +27,13 @@ from .const import (
     CONF_CRITICAL_THRESHOLD,
     CONF_HORIZON_DAYS,
     CONF_LANGUAGE,
+    CONF_MAX_PROJECT_STEPS_WEEKDAY,
+    CONF_MAX_PROJECT_STEPS_WEEKEND,
     CONF_MODEL,
     CONF_NOTIFY_SERVICE,
+    CONF_PROJECT_BASELINE_CAP,
+    CONF_PROJECT_BASELINE_PER_ITEM,
+    CONF_PROJECT_PLANNING_ENABLED,
     CONF_PROVIDER,
     CONF_REACTION_ENTITY,
     CONF_REACTION_ON_CRITICAL,
@@ -40,11 +46,15 @@ from .const import (
     DEFAULT_CRITICAL_THRESHOLD,
     DEFAULT_HORIZON_DAYS,
     DEFAULT_LANGUAGE,
+    DEFAULT_MAX_PROJECT_STEPS_WEEKDAY,
+    DEFAULT_MAX_PROJECT_STEPS_WEEKEND,
+    DEFAULT_PROJECT_PLANNING_ENABLED,
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_WARNING_THRESHOLD,
     DOMAIN,
     EVENT_ANALYSIS_UPDATED,
     EVENT_THRESHOLD_EXCEEDED,
+    FACTOR_HA_CONTEXT,
     LEVEL_CRITICAL,
     LEVEL_HIGH,
     LEVEL_ORDER,
@@ -52,8 +62,15 @@ from .const import (
     STORAGE_VERSION,
 )
 from .llm_providers import LLMProviderClient
-from .models import CalendarEventInput, DayLoadAnalysis, FeedbackEntry, score_to_level
-from .prompt_builder import _format_badge_summary, analyze_day_heuristic, get_factor_weights
+from .models import CalendarEventInput, DayLoadAnalysis, FeedbackEntry, HiddenTask, score_to_level
+from .prompt_builder import (
+    _format_badge_summary,
+    _make_task_uid,
+    analyze_day_heuristic,
+    compute_project_baseline,
+    get_factor_weights,
+    infer_step_sunday_restrictions,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -122,6 +139,10 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self._notified_thresholds: dict[str, str] = {}
         self._force_refresh = False
         self._raw_analyses: dict[str, DayLoadAnalysis] = {}
+        self._project_breakdown_cache: dict[str, Any] = {}
+        self._project_steps: list[dict[str, Any]] = []
+        self._last_open_project_count: int = 0
+        self._last_day_event_counts: dict[str, int] = {}
 
     @property
     def merged_config(self) -> dict[str, Any]:
@@ -146,6 +167,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         if stored.get("ical_token"):
             self.ical_token = str(stored["ical_token"])
         self._notified_thresholds = dict(stored.get("notified_thresholds", {}))
+        self._project_breakdown_cache = dict(stored.get("project_breakdown_cache", {}))
         self._state_loaded = True
 
     async def _async_save_state(self) -> None:
@@ -159,6 +181,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                 "synced_calendar_uids": sorted(self._synced_calendar_uids),
                 "ical_token": self.ical_token,
                 "notified_thresholds": self._notified_thresholds,
+                "project_breakdown_cache": self._project_breakdown_cache,
             }
         )
 
@@ -167,6 +190,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         await self.async_load_state()
         if clear_cache:
             self._cache.clear()
+            self._project_breakdown_cache.clear()
         self._force_refresh = True
         try:
             await self.async_refresh()
@@ -189,6 +213,9 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
 
         events_by_day = await self._async_fetch_events_by_day(start_dt, end_dt, horizon, today, tz)
         ha_context = await self._async_collect_ha_context(config)
+        self._last_day_event_counts = {d_key: len(evs) for d_key, evs in events_by_day.items()}
+        self._last_open_project_count = int(ha_context.get("open_todos_count", len(ha_context.get("open_todos", []))))
+        self._project_steps = await self._async_get_project_steps(ha_context, config)
 
         results: dict[str, DayLoadAnalysis] = {}
         for offset in range(horizon):
@@ -237,7 +264,14 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             self._cache.pop(stale_key, None)
 
         self._raw_analyses = results
-        results = self._rebalance_and_score_horizon(results, today, tz)
+        results = self._rebalance_and_score_horizon(
+            results,
+            today,
+            tz,
+            project_steps=self._project_steps,
+            open_project_count=self._last_open_project_count,
+            event_counts=self._last_day_event_counts,
+        )
 
         if config.get(CONF_AUTO_PUSH_TODO) and config.get(CONF_TARGET_TODO_ENTITY):
             await self.async_push_hidden_tasks_to_todo(
@@ -279,10 +313,16 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         config: dict[str, Any],
     ) -> str:
         """Compute deterministic SHA-256 hash to skip redundant LLM calls."""
+        # Keep volatile project todo backlog decoupled from per-day LLM cache so
+        # baseline load and project sub-tasks recompute locally in milliseconds.
+        day_ha_context = {
+            "energy_sensor": ha_context.get("energy_sensor", ""),
+            "weather": ha_context.get("weather", ""),
+        }
         payload = {
             "date": day_str,
             "events": [e.to_dict() for e in sorted(events, key=lambda x: (x.start.isoformat(), x.summary))],
-            "ha_context": ha_context,
+            "ha_context": day_ha_context,
             "weights": get_factor_weights(config),
             "profile": config.get(CONF_USER_PROFILE, ""),
             "provider": config.get(CONF_PROVIDER, ""),
@@ -293,6 +333,53 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         }
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
+
+    async def _async_get_project_steps(
+        self,
+        ha_context: dict[str, Any],
+        config: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return cached or freshly decomposed 20-45 min project sub-tasks for ongoing To-Dos."""
+        if not config.get(CONF_PROJECT_PLANNING_ENABLED, DEFAULT_PROJECT_PLANNING_ENABLED):
+            return []
+        project_items = list(ha_context.get("open_todo_details") or [])
+        if not project_items:
+            summaries = list(ha_context.get("open_todos") or [])
+            project_items = [{"summary": str(s), "description": ""} for s in summaries if str(s).strip()]
+        if not project_items:
+            self._project_breakdown_cache = {}
+            return []
+
+        fp_payload = {
+            "items": project_items[:40],
+            "provider": config.get(CONF_PROVIDER, ""),
+            "model": config.get(CONF_MODEL, ""),
+            "language": config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE),
+        }
+        fp = hashlib.sha256(
+            json.dumps(fp_payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+        if (
+            not self._force_refresh
+            and self._project_breakdown_cache.get("fingerprint") == fp
+            and isinstance(self._project_breakdown_cache.get("steps"), list)
+        ):
+            return list(self._project_breakdown_cache["steps"])
+
+        breakdown_fn = getattr(self.llm_client, "async_breakdown_projects", None)
+        steps: list[dict[str, Any]] = []
+        if callable(breakdown_fn):
+            candidate = await breakdown_fn(project_items, config)
+            if isinstance(candidate, list):
+                steps = candidate
+        if not steps:
+            from .prompt_builder import decompose_project_todos_heuristic
+
+            steps = decompose_project_todos_heuristic(project_items, config)
+
+        self._project_breakdown_cache = {"fingerprint": fp, "steps": steps}
+        return list(steps)
 
     async def _async_fetch_events_by_day(
         self,
@@ -359,6 +446,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
     async def _async_collect_ha_context(self, config: dict[str, Any]) -> dict[str, Any]:
         """Collect Factor 4 live Home Assistant context (todos, energy sensor, weather)."""
         open_todos: list[str] = []
+        open_todo_details: list[dict[str, str]] = []
         for todo_entity in config.get(CONF_CONTEXT_TODOS, []) or []:
             try:
                 resp = await self.hass.services.async_call(
@@ -373,10 +461,23 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                     summary = str(item.get("summary", "")).strip()
                     if summary:
                         open_todos.append(summary)
+                        raw_desc = str(item.get("description") or "")
+                        clean_desc = re.sub(r"\[ANYTYPE-[^\]]+\]", "", raw_desc).strip()
+                        open_todo_details.append(
+                            {
+                                "summary": summary,
+                                "description": clean_desc[:240],
+                                "entity_id": str(todo_entity),
+                            }
+                        )
             except Exception:  # noqa: BLE001
                 state = self.hass.states.get(todo_entity)
                 if state and state.state.isdigit():
-                    open_todos.extend([f"{todo_entity} item"] * int(state.state))
+                    for _ in range(int(state.state)):
+                        open_todos.append(f"{todo_entity} item")
+                        open_todo_details.append(
+                            {"summary": f"{todo_entity} item", "description": "", "entity_id": str(todo_entity)}
+                        )
 
         energy_info = ""
         energy_entity = config.get(CONF_CONTEXT_ENERGY_SENSOR)
@@ -395,7 +496,9 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                 weather_info = f"{state.state}" + (f", {temp}°" if temp is not None else "")
 
         return {
-            "open_todos": open_todos[:25],
+            "open_todos": open_todos[:100],
+            "open_todos_count": len(open_todo_details),
+            "open_todo_details": open_todo_details[:50],
             "energy_sensor": energy_info,
             "weather": weather_info,
         }
@@ -499,14 +602,49 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         raw_results: dict[str, DayLoadAnalysis],
         today: datetime.date,
         tz: datetime.tzinfo | None = None,
+        project_steps: list[dict[str, Any]] | None = None,
+        open_project_count: int | None = None,
+        event_counts: dict[str, int] | None = None,
     ) -> dict[str, DayLoadAnalysis]:
-        """Move advance prep/errand tasks onto earlier days (evening before or lowest-load day) and link bidirectionally."""
+        """Apply capped project baseline, move prep tasks to earlier calm days, and schedule project steps."""
+        config = self.merged_config
+        language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
+        is_de = language.startswith("de")
+
         rebalanced: dict[str, DayLoadAnalysis] = {
             k: DayLoadAnalysis.from_dict(v.to_dict()) for k, v in raw_results.items()
         }
+        proj_count = (
+            open_project_count
+            if open_project_count is not None
+            else self._last_open_project_count
+        )
+        baseline_load = compute_project_baseline(proj_count, config)
+
         for day in rebalanced.values():
             day.base_score = day.base_score or day.score
             day.linked_prep_tasks = []
+            day.project_baseline_load = baseline_load
+            day.open_project_count = proj_count
+            if baseline_load > 0:
+                day.base_score = min(100, day.base_score + baseline_load)
+                day.factor_breakdown[FACTOR_HA_CONTEXT] = min(
+                    100,
+                    max(day.factor_breakdown.get("ha_context", 0), baseline_load * 4),
+                )
+                if day.top_stressor in ("Freier Kalendertag", "Clear schedule", ""):
+                    day.top_stressor = (
+                        f"Projekt-Grundlast (+{baseline_load}%)"
+                        if is_de
+                        else f"Project Baseline (+{baseline_load}%)"
+                    )
+                    baseline_note = (
+                        f" Zusätzlich erzeugen {proj_count} offene Hintergrund-Projekte eine gedeckelte Grundlast von +{baseline_load}%."
+                        if is_de
+                        else f" Ongoing open projects ({proj_count} items) add +{baseline_load}% capped background load."
+                    )
+                    if baseline_note.strip() not in day.reasoning:
+                        day.reasoning = f"{day.reasoning}{baseline_note}".strip()
 
         for day_str in sorted(rebalanced.keys()):
             source_day = rebalanced[day_str]
@@ -515,7 +653,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
 
             kept_tasks = []
             for task in source_day.hidden_tasks:
-                if task.category in ("travel", "followup") or task.placement_mode == "same_day":
+                if task.category in ("travel", "followup", "project_step") or task.placement_mode in ("same_day", "free_slot"):
                     kept_tasks.append(task)
                     continue
 
@@ -541,7 +679,6 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                         if cand is not None:
                             candidates.append(cand)
                     if not candidates and min_lead > 1:
-                        # Fallback if major event is fewer than 7 days away
                         for back in range(1, min_lead):
                             cand_date = source_day.date - datetime.timedelta(days=back)
                             if cand_date < today:
@@ -550,7 +687,6 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                             if cand is not None:
                                 candidates.append(cand)
                     if candidates:
-                        # Pick the day with the lowest base_score (preferring earlier calm day on ties)
                         target_day = min(candidates, key=lambda c: (c.base_score, c.date))
                         target_hour = 17
                         target_minute = 30
@@ -587,13 +723,111 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                     }
                 )
 
-                # Shift gentle cognitive weight from appointment day to prep day
                 target_day.base_score = min(100, target_day.base_score + max(2, round(task.load_contribution * 0.4)))
                 source_day.base_score = max(0, source_day.base_score - max(1, round(task.load_contribution * 0.25)))
 
             source_day.hidden_tasks = kept_tasks
 
+        steps_to_schedule = (
+            list(project_steps)
+            if project_steps is not None
+            else list(self._project_steps)
+        )
+        if config.get(CONF_PROJECT_PLANNING_ENABLED, DEFAULT_PROJECT_PLANNING_ENABLED) and steps_to_schedule:
+            ev_counts = event_counts if event_counts is not None else self._last_day_event_counts
+            self._schedule_project_steps(rebalanced, steps_to_schedule, today, tz, ev_counts, config)
+
         return self._apply_dynamic_completion_relief(rebalanced)
+
+    def _schedule_project_steps(
+        self,
+        rebalanced: dict[str, DayLoadAnalysis],
+        project_steps: list[dict[str, Any]],
+        today: datetime.date,
+        tz: datetime.tzinfo | None,
+        event_counts: dict[str, int],
+        config: dict[str, Any],
+    ) -> None:
+        """Assign decomposed project steps onto calm weekends (max 2, Sunday quiet-only) and free weekdays."""
+        max_weekend = max(0, min(4, int(config.get(CONF_MAX_PROJECT_STEPS_WEEKEND, DEFAULT_MAX_PROJECT_STEPS_WEEKEND))))
+        max_weekday = max(0, min(2, int(config.get(CONF_MAX_PROJECT_STEPS_WEEKDAY, DEFAULT_MAX_PROJECT_STEPS_WEEKDAY))))
+
+        remaining = list(project_steps)
+        weekend_slots = [(10, 0), (14, 30), (11, 15), (16, 0)]
+        weekday_slots = [(17, 15), (17, 50)]
+
+        for day_str in sorted(rebalanced.keys()):
+            if not remaining:
+                break
+            day = rebalanced[day_str]
+            if day.date < today:
+                continue
+
+            is_weekend = day.date.weekday() >= 5
+            is_sunday = day.date.weekday() == 6
+            ev_cnt = int(event_counts.get(day_str, 0))
+            if is_weekend:
+                if day.base_score >= 45 or ev_cnt > 1:
+                    continue
+                day_cap = max_weekend
+                slots = weekend_slots
+            else:
+                if day.base_score >= 38 or ev_cnt > 0:
+                    continue
+                day_cap = max_weekday
+                slots = weekday_slots
+
+            scheduled_today = 0
+            idx = 0
+            while idx < len(remaining) and scheduled_today < day_cap:
+                step = remaining[idx]
+                combined = f"{step.get('source_todo', '')} {step.get('title', '')} {' '.join(step.get('checklist', []))}"
+                req_open, noisy = infer_step_sunday_restrictions(
+                    combined,
+                    raw_requires_open=step.get("requires_open_business"),
+                    raw_is_noisy=step.get("is_noisy"),
+                )
+                if is_sunday and (req_open or noisy):
+                    idx += 1
+                    continue
+
+                slot_hour, slot_minute = slots[min(scheduled_today, len(slots) - 1)]
+                dur_min = max(15, min(60, int(step.get("duration_minutes", 30))))
+                start_dt = datetime.datetime.combine(day.date, datetime.time(slot_hour, slot_minute), tzinfo=tz)
+                end_dt = start_dt + datetime.timedelta(minutes=dur_min)
+
+                # Avoid overlapping an existing task on the same day
+                while any(not (end_dt <= t.start or start_dt >= t.end) for t in day.hidden_tasks):
+                    start_dt += datetime.timedelta(minutes=45)
+                    end_dt = start_dt + datetime.timedelta(minutes=dur_min)
+                if start_dt.hour >= 19 or (not is_weekend and start_dt.hour < 17):
+                    break
+
+                source_todo = str(step.get("source_todo") or "Hausbau").strip()
+                title = str(step.get("title") or source_todo).strip()
+                uid = _make_task_uid(day.date, source_todo, title, "project_step")
+                day.hidden_tasks.append(
+                    HiddenTask(
+                        uid=uid,
+                        parent_event_summary=source_todo,
+                        title=title,
+                        category="project_step",
+                        start=start_dt,
+                        end=end_dt,
+                        load_contribution=max(4, min(20, int(step.get("load_contribution", 10)))),
+                        checklist=[str(c) for c in (step.get("checklist") or [])],
+                        parent_event_date=day.date.isoformat(),
+                        scheduled_date=day.date.isoformat(),
+                        lead_days=0,
+                        placement_mode="free_slot",
+                        requires_open_business=req_open,
+                        is_noisy=noisy,
+                    )
+                )
+                day.hidden_tasks.sort(key=lambda t: t.start)
+                day.base_score = min(100, day.base_score + 2)
+                remaining.pop(idx)
+                scheduled_today += 1
 
     def _apply_dynamic_completion_relief(
         self,
@@ -684,7 +918,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             return 0
 
         source_map = analyses if analyses is not None else (self.data or {})
-        synced_count = 0
+        synced_count = await self._async_cleanup_stale_external_events(target_cal, source_map)
 
         for day in sorted(source_map.values(), key=lambda d: d.date):
             badge_key = f"badge:{target_cal}:{day.date.isoformat()}:{day.score}"
@@ -741,6 +975,82 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         if save_after and synced_count > 0:
             await self._async_save_state()
         return synced_count
+
+    async def _async_cleanup_stale_external_events(
+        self,
+        target_cal: str,
+        source_map: dict[str, DayLoadAnalysis],
+    ) -> int:
+        """Delete outdated [ML-BADGE-*] and [ML-TASK-*] events from target_cal."""
+        if not source_map:
+            return 0
+        days = sorted(d.date for d in source_map.values())
+        tz = dt_util.now().tzinfo
+        start_dt = datetime.datetime.combine(days[0], datetime.time.min, tzinfo=tz)
+        end_dt = datetime.datetime.combine(days[-1] + datetime.timedelta(days=1), datetime.time.min, tzinfo=tz)
+
+        try:
+            resp = await self.hass.services.async_call(
+                "calendar",
+                "get_events",
+                {
+                    "entity_id": target_cal,
+                    "start_date_time": start_dt.isoformat(),
+                    "end_date_time": end_dt.isoformat(),
+                },
+                blocking=True,
+                return_response=True,
+            )
+        except Exception:  # noqa: BLE001
+            return 0
+
+        if not isinstance(resp, dict):
+            return 0
+
+        expected_badges = {(d.date.isoformat(), d.badge_summary) for d in source_map.values()}
+        expected_task_uids = {t.uid for d in source_map.values() for t in d.hidden_tasks}
+        deleted = 0
+
+        events = (resp.get(target_cal) or {}).get("events", [])
+        for ev in events:
+            desc = str(ev.get("description") or "")
+            summary = str(ev.get("summary") or "")
+            raw_start = str(ev.get("start") or "")
+            date_part = raw_start[:10]
+            is_stale = False
+
+            if "[ML-BADGE-" in desc:
+                is_stale = (date_part, summary) not in expected_badges
+            elif "[ML-TASK-" in desc:
+                uid_part = desc.split("[ML-TASK-", 1)[1].split("]", 1)[0]
+                is_stale = uid_part not in expected_task_uids
+
+            if not is_stale or len(date_part) != 10:
+                continue
+
+            try:
+                d_val = datetime.date.fromisoformat(date_part)
+            except ValueError:
+                continue
+            w_start = datetime.datetime.combine(d_val, datetime.time.min, tzinfo=tz).isoformat()
+            w_end = datetime.datetime.combine(d_val + datetime.timedelta(days=1), datetime.time.min, tzinfo=tz).isoformat()
+            try:
+                await self.hass.services.async_call(
+                    "calendar",
+                    "delete_event",
+                    {
+                        "entity_id": target_cal,
+                        "summary": summary,
+                        "start_date_time": w_start,
+                        "end_date_time": w_end,
+                    },
+                    blocking=True,
+                )
+                deleted += 1
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Could not delete stale event '%s' from %s: %s", summary, target_cal, err)
+
+        return deleted
 
     async def _async_evaluate_reactions(
         self,

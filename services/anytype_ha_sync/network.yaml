@@ -1,0 +1,13 @@
+id: YOUR_ANY_SYNC_CONFIG_ID
+networkId: YOUR_ANY_SYNC_NETWORK_ID
+nodes:
+  - peerId: YOUR_ANY_SYNC_PEER_ID
+    addresses:
+      - quic://anytype.example.internal:33020
+      - anytype.example.internal:33010
+    types:
+      - coordinator
+      - consensus
+      - tree
+      - file
+creationTime: 2026-03-30T08:14:28.979405237Z

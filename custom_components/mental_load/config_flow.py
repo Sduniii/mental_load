@@ -25,8 +25,13 @@ from .const import (
     CONF_DEFAULT_TRAVEL_MINUTES,
     CONF_HORIZON_DAYS,
     CONF_LANGUAGE,
+    CONF_MAX_PROJECT_STEPS_WEEKDAY,
+    CONF_MAX_PROJECT_STEPS_WEEKEND,
     CONF_MODEL,
     CONF_NOTIFY_SERVICE,
+    CONF_PROJECT_BASELINE_CAP,
+    CONF_PROJECT_BASELINE_PER_ITEM,
+    CONF_PROJECT_PLANNING_ENABLED,
     CONF_PROVIDER,
     CONF_REACTION_ENTITY,
     CONF_REACTION_ON_CRITICAL,
@@ -48,8 +53,13 @@ from .const import (
     DEFAULT_FOLLOWUP_MINUTES,
     DEFAULT_HORIZON_DAYS,
     DEFAULT_LANGUAGE,
+    DEFAULT_MAX_PROJECT_STEPS_WEEKDAY,
+    DEFAULT_MAX_PROJECT_STEPS_WEEKEND,
     DEFAULT_MODELS,
     DEFAULT_PREP_MINUTES,
+    DEFAULT_PROJECT_BASELINE_CAP,
+    DEFAULT_PROJECT_BASELINE_PER_ITEM,
+    DEFAULT_PROJECT_PLANNING_ENABLED,
     DEFAULT_TEMPERATURE,
     DEFAULT_TRAVEL_MINUTES,
     DEFAULT_UPDATE_INTERVAL,
@@ -286,6 +296,34 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_WEIGHT_HIDDEN_WORK, default=self._cur(CONF_WEIGHT_HIDDEN_WORK, 1.0)): WEIGHT_SELECTOR,
             vol.Optional(CONF_CONTEXT_TODOS, default=self._cur(CONF_CONTEXT_TODOS, [])): selector.EntitySelector(
                 selector.EntitySelectorConfig(domain="todo", multiple=True)
+            ),
+            vol.Optional(
+                CONF_PROJECT_BASELINE_PER_ITEM,
+                default=self._cur(CONF_PROJECT_BASELINE_PER_ITEM, DEFAULT_PROJECT_BASELINE_PER_ITEM),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0.0, max=5.0, step=0.5, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Optional(
+                CONF_PROJECT_BASELINE_CAP,
+                default=self._cur(CONF_PROJECT_BASELINE_CAP, DEFAULT_PROJECT_BASELINE_CAP),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, max=40, step=1, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Optional(
+                CONF_PROJECT_PLANNING_ENABLED,
+                default=self._cur(CONF_PROJECT_PLANNING_ENABLED, DEFAULT_PROJECT_PLANNING_ENABLED),
+            ): selector.BooleanSelector(),
+            vol.Optional(
+                CONF_MAX_PROJECT_STEPS_WEEKEND,
+                default=self._cur(CONF_MAX_PROJECT_STEPS_WEEKEND, DEFAULT_MAX_PROJECT_STEPS_WEEKEND),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, max=4, step=1, mode=selector.NumberSelectorMode.BOX)
+            ),
+            vol.Optional(
+                CONF_MAX_PROJECT_STEPS_WEEKDAY,
+                default=self._cur(CONF_MAX_PROJECT_STEPS_WEEKDAY, DEFAULT_MAX_PROJECT_STEPS_WEEKDAY),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, max=2, step=1, mode=selector.NumberSelectorMode.BOX)
             ),
         }
 
