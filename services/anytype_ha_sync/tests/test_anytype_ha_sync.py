@@ -7,6 +7,8 @@ from services.anytype_ha_sync.sync import (
     AnytypeTask,
     HaTodoItem,
     extract_anytype_id,
+    extract_task_due_date,
+    extract_task_metadata,
     format_ha_description,
     is_anytype_task_done,
     run_sync_cycle,
@@ -63,6 +65,29 @@ def test_is_anytype_task_done_handles_checkbox_and_status() -> None:
     assert is_anytype_task_done({"properties": {"done": True, "status": ["To Do"]}}) is True
     assert is_anytype_task_done({"properties": {"done": False, "status": ["Done"]}}) is True
     assert is_anytype_task_done({"properties": {"done": False, "status": ["In Progress"]}}) is False
+
+
+def test_extract_task_metadata_includes_priority_status_and_due_date() -> None:
+    raw = {
+        "properties": {
+            "priority": {"name": "Hoch"},
+            "status": ["In Progress"],
+            "due_date": "2026-11-28T00:00:00Z",
+        },
+        "snippet": "Projekt: Hausbau",
+    }
+    meta = extract_task_metadata(raw)
+    assert meta.startswith("Prio: Hoch | Status: In Progress")
+    assert "Projekt: Hausbau" in meta
+    assert extract_task_due_date(raw) == "2026-11-28"
+
+    raw_list_props = {
+        "properties": [
+            {"key": "priority", "select": {"name": "Niedrig"}},
+            {"key": "status", "select": {"name": "To Do"}},
+        ]
+    }
+    assert extract_task_metadata(raw_list_props) == "Prio: Niedrig | Status: To Do"
 
 
 def test_sync_creates_idempotently_updates_and_bidirectional_complete() -> None:

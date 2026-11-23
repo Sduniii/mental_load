@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.7.0] — 2026-11-23
+
+### Added
+- **Anytype Task Priority Support (`Priorität` / `Status: In Progress` / `Due date`):**
+  - `anytype_ha_sync` now extracts Anytype's `priority` (`Prio: Hoch | Mittel | Niedrig`) and `due_date` fields into Home Assistant To-Do items.
+  - Priority-weighted daily baseline load: `Hoch` (`+3%`), `Mittel`/`Normal` (`+2%`), and `Niedrig` (`+1%`) with the configurable `15%` cap still enforced.
+  - 4-tier priority ranking (`high` > `medium` / `In Progress` > `normal` > `low`) ensures urgent and high-priority Hausbau projects claim the earliest calm weekend and weekday slots first while strictly respecting the Sunday quiet-only rule.
+
+---
+
 ## [1.6.0] — 2026-11-23
 
 ### Added

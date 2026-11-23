@@ -34,44 +34,73 @@ def extract_anytype_id(description: str | None) -> str | None:
     return match.group(1) if match else None
 
 
+def _extract_prop(props: Any, key: str) -> Any:
+    """Read a property value whether Anytype returns properties as dict or list of dicts."""
+    if isinstance(props, dict):
+        return props.get(key)
+    if isinstance(props, list):
+        for p in props:
+            if not isinstance(p, dict) or str(p.get("key")) != key:
+                continue
+            for field in ("select", "multi_select", "checkbox", "date", "text", "number", "objects", "value"):
+                if field in p and p[field] is not None:
+                    return p[field]
+    return None
+
+
+def _format_prop_value(val: Any) -> str:
+    """Normalize Anytype select/multi_select/string property values into clean text."""
+    if isinstance(val, dict):
+        return str(val.get("name") or val.get("key") or "").strip()
+    if isinstance(val, list):
+        tokens = [_format_prop_value(v) for v in val]
+        return ", ".join(t for t in tokens if t)
+    if val is None:
+        return ""
+    return str(val).strip()
+
+
 def is_anytype_task_done(raw_obj: dict[str, Any]) -> bool:
     """Determine completion state from both Anytype's 'done' checkbox and 'status' property."""
     props = raw_obj.get("properties") or {}
-    if isinstance(props, list):
-        props_map = {str(p.get("key")): p.get("checkbox") if "checkbox" in p else p.get("select") for p in props if isinstance(p, dict)}
-        done_val = props_map.get("done")
-        status_val = props_map.get("status")
-    else:
-        done_val = props.get("done")
-        status_val = props.get("status")
+    done_val = _extract_prop(props, "done")
+    status_val = _extract_prop(props, "status")
 
     if bool(done_val) is True:
         return True
-    if isinstance(status_val, list):
-        status_tokens = [str(s).strip().lower() for s in status_val]
-    elif isinstance(status_val, dict):
-        status_tokens = [str(status_val.get("name") or status_val.get("key") or "").strip().lower()]
-    elif status_val:
-        status_tokens = [str(status_val).strip().lower()]
-    else:
-        status_tokens = []
+    status_text = _format_prop_value(status_val)
+    status_tokens = [tok.strip().lower() for tok in status_text.split(",") if tok.strip()]
     return any(tok in {"done", "erledigt", "completed", "fertig", "closed"} for tok in status_tokens)
 
 
+def extract_task_due_date(raw_obj: dict[str, Any]) -> str | None:
+    """Extract ISO date (YYYY-MM-DD) from Anytype's due_date property if present."""
+    props = raw_obj.get("properties") or {}
+    due_val = _format_prop_value(_extract_prop(props, "due_date"))
+    return due_val[:10] if len(due_val) >= 10 else None
+
+
 def extract_task_metadata(raw_obj: dict[str, Any]) -> str:
-    """Build a compact status/details summary from an Anytype task object."""
+    """Build a compact priority/status/details summary from an Anytype task object."""
     props = raw_obj.get("properties") or {}
     parts: list[str] = []
-    if isinstance(props, dict):
-        status_val = props.get("status")
-        if isinstance(status_val, list) and status_val:
-            parts.append(f"Status: {', '.join(str(x) for x in status_val)}")
-        elif isinstance(status_val, str) and status_val.strip():
-            parts.append(f"Status: {status_val.strip()}")
 
-        desc_val = str(props.get("description") or "").strip()
-        if desc_val:
-            parts.append(desc_val[:400])
+    prio_val = _format_prop_value(_extract_prop(props, "priority"))
+    if prio_val:
+        parts.append(f"Prio: {prio_val}")
+
+    status_val = _format_prop_value(_extract_prop(props, "status"))
+    if status_val:
+        parts.append(f"Status: {status_val}")
+
+    tag_val = _format_prop_value(_extract_prop(props, "tag"))
+    if tag_val:
+        parts.append(f"Tag: {tag_val}")
+
+    desc_val = _format_prop_value(_extract_prop(props, "description"))
+    if desc_val:
+        parts.append(desc_val[:400])
+
     snippet = str(raw_obj.get("snippet") or "").strip()
     if snippet:
         parts.append(snippet[:400])
@@ -194,6 +223,7 @@ class HttpSyncBackend:
                         name=name,
                         done=is_anytype_task_done(row),
                         details=extract_task_metadata(row),
+                        due_date=extract_task_due_date(row),
                     )
                 )
             pagination = payload.get("pagination") or {}

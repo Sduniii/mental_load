@@ -2,6 +2,10 @@
 
 Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Modell deiner Wahl, berechne den täglichen **Mental Load (0–100%)**, mache **unsichtbare Kopf-Aufgaben** direkt in `calendar.mental_load` sichtbar und löse aktive Smart-Home-Reaktionen aus.
 
+## Neu in v1.7.0
+
+- 🚦 **Prioritäten aus Anytype (`Priorität`, `In Progress`, Fälligkeit):** `Hoch` (+3%), `Mittel`/`Normal` (+2%) und `Niedrig` (+1%) gewichten die gedeckelte Projekt-Grundlast (max. `15%`) und steuern die Reihenfolge der Etappenplanung — wichtige und aktive Projekte landen automatisch in den ersten freien Slots (unter Beibehaltung der Sonntagsregel).
+
 ## Neu in v1.6.0
 
 - 🧱 **Gedeckelte Projekt-Grundlast:** Offene Dauerprojekte (`todo.hausbau_anytype` o. ä.) erzeugen jeden Tag eine konfigurierbare Grundlast (`+2%` pro offenem Punkt, gedeckelt auf max. `15%`) — auch an terminfreien Tagen.

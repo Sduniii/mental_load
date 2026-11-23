@@ -31,6 +31,10 @@ from custom_components.mental_load.const import (
 )
 from custom_components.mental_load.coordinator import MentalLoadCoordinator
 from custom_components.mental_load.models import DayLoadAnalysis, HiddenTask
+from custom_components.mental_load.prompt_builder import (
+    compute_project_baseline,
+    extract_todo_priority,
+)
 from tests.conftest import FakeHass
 
 
@@ -544,3 +548,73 @@ async def test_external_calendar_sync_deletes_stale_badges_and_tasks() -> None:
     deleted_summaries = {c[2]["summary"] for c in delete_calls}
     assert deleted_summaries == {"🟢 3% Mental Load (Niedrig) – Alt", "🧠 Veraltete Aufgabe"}
     assert "Privater Kalendereintrag" not in deleted_summaries
+
+
+async def test_project_priority_baseline_and_scheduling_order() -> None:
+    ref = datetime.date(2026, 11, 23)
+    assert extract_todo_priority("Task A", "Prio: Hoch | Status: To Do", reference_date=ref) == (1, "high")
+    assert extract_todo_priority("Task B", "Status: To Do", due="2026-11-27", reference_date=ref) == (1, "high")
+    assert extract_todo_priority("Task C", "Status: In Progress", reference_date=ref) == (2, "medium")
+    assert extract_todo_priority("Task D", "Status: To Do", reference_date=ref) == (3, "normal")
+    assert extract_todo_priority("Task E", "Prio: Niedrig | Status: To Do", reference_date=ref) == (4, "low")
+
+    cfg = {CONF_PROJECT_BASELINE_PER_ITEM: 2.0, CONF_PROJECT_BASELINE_CAP: 15}
+    weighted_items = [
+        {"summary": "A", "description": "Prio: Hoch"},
+        {"summary": "B", "description": "Prio: Hoch"},
+        {"summary": "C", "description": "Prio: Niedrig"},
+    ]
+    # 2 * 3% + 1 * 1% = 7%
+    assert compute_project_baseline(3, cfg, project_items=weighted_items) == 7
+    many_high = [{"summary": f"H{i}", "description": "Prio: Hoch"} for i in range(6)]
+    assert compute_project_baseline(6, cfg, project_items=many_high) == 15
+
+    hass = FakeHass()
+    hass.services.set_response("calendar", "get_events", {"calendar.google": {"events": []}})
+    hass.services.set_response(
+        "todo",
+        "get_items",
+        {
+            "todo.hausbau_anytype": {
+                "items": [
+                    {"summary": "Garten Schuppen aufräumen", "description": "Prio: Niedrig | Status: To Do", "status": "needs_action"},
+                    {"summary": "Zählerkasten Doku", "description": "Status: To Do", "status": "needs_action"},
+                    {"summary": "OG: Elektrik Schaltplan", "description": "Status: In Progress", "status": "needs_action"},
+                    {"summary": "Dachfenster Notabdichtung", "description": "Prio: Hoch | Status: To Do", "status": "needs_action"},
+                ]
+            }
+        },
+    )
+
+    entry = ConfigEntry(
+        entry_id="priority_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google"],
+            CONF_CONTEXT_TODOS: ["todo.hausbau_anytype"],
+            CONF_HORIZON_DAYS: 10,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_PROJECT_BASELINE_PER_ITEM: 2.0,
+            CONF_PROJECT_BASELINE_CAP: 15,
+            CONF_PROJECT_PLANNING_ENABLED: True,
+            CONF_MAX_PROJECT_STEPS_WEEKEND: 2,
+            CONF_MAX_PROJECT_STEPS_WEEKDAY: 1,
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    await coord.async_config_entry_first_refresh()
+
+    # Monday 2026-11-23 is the earliest slot -> must go to Prio: Hoch even though it was last in input list
+    mon_steps = [t for t in coord.data["2026-11-23"].hidden_tasks if t.category == "project_step"]
+    assert len(mon_steps) == 1
+    assert "Dachfenster Notabdichtung" in mon_steps[0].parent_event_summary
+
+    # Collect chronological sequence of distinct scheduled projects across the horizon
+    ordered_parents: list[str] = []
+    for day_key in sorted(coord.data.keys()):
+        for step in coord.data[day_key].hidden_tasks:
+            if step.category == "project_step" and step.parent_event_summary not in ordered_parents:
+                ordered_parents.append(step.parent_event_summary)
+
+    assert ordered_parents[0] == "Dachfenster Notabdichtung"
+    assert ordered_parents.index("OG: Elektrik Schaltplan") < ordered_parents.index("Zählerkasten Doku")
+    assert ordered_parents.index("Zählerkasten Doku") < ordered_parents.index("Garten Schuppen aufräumen")

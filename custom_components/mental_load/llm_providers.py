@@ -117,7 +117,7 @@ class LLMProviderClient:
 
     async def async_breakdown_projects(
         self,
-        project_items: list[dict[str, str]],
+        project_items: list[dict[str, Any]],
         config: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """Decompose open project To-Dos into small schedulable sub-tasks with fallback."""
@@ -135,7 +135,7 @@ class LLMProviderClient:
                 user_prompt=user_prompt,
                 config=config,
             )
-            parsed = parse_project_breakdown_response(raw_response, config)
+            parsed = parse_project_breakdown_response(raw_response, config, project_items=project_items)
             return parsed or decompose_project_todos_heuristic(project_items, config)
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(

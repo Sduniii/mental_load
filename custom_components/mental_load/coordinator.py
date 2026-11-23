@@ -68,8 +68,10 @@ from .prompt_builder import (
     _make_task_uid,
     analyze_day_heuristic,
     compute_project_baseline,
+    extract_todo_priority,
     get_factor_weights,
     infer_step_sunday_restrictions,
+    sort_project_items_by_priority,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -142,6 +144,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self._project_breakdown_cache: dict[str, Any] = {}
         self._project_steps: list[dict[str, Any]] = []
         self._last_open_project_count: int = 0
+        self._last_open_project_items: list[dict[str, Any]] = []
         self._last_day_event_counts: dict[str, int] = {}
 
     @property
@@ -215,6 +218,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         ha_context = await self._async_collect_ha_context(config)
         self._last_day_event_counts = {d_key: len(evs) for d_key, evs in events_by_day.items()}
         self._last_open_project_count = int(ha_context.get("open_todos_count", len(ha_context.get("open_todos", []))))
+        self._last_open_project_items = list(ha_context.get("open_todo_details") or [])
         self._project_steps = await self._async_get_project_steps(ha_context, config)
 
         results: dict[str, DayLoadAnalysis] = {}
@@ -446,7 +450,8 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
     async def _async_collect_ha_context(self, config: dict[str, Any]) -> dict[str, Any]:
         """Collect Factor 4 live Home Assistant context (todos, energy sensor, weather)."""
         open_todos: list[str] = []
-        open_todo_details: list[dict[str, str]] = []
+        open_todo_details: list[dict[str, Any]] = []
+        ref_today = dt_util.now().date()
         for todo_entity in config.get(CONF_CONTEXT_TODOS, []) or []:
             try:
                 resp = await self.hass.services.async_call(
@@ -463,10 +468,20 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                         open_todos.append(summary)
                         raw_desc = str(item.get("description") or "")
                         clean_desc = re.sub(r"\[ANYTYPE-[^\]]+\]", "", raw_desc).strip()
+                        due_raw = str(item.get("due") or "").strip()
+                        rank, label = extract_todo_priority(
+                            summary=summary,
+                            description=clean_desc,
+                            due=due_raw or None,
+                            reference_date=ref_today,
+                        )
                         open_todo_details.append(
                             {
                                 "summary": summary,
                                 "description": clean_desc[:240],
+                                "due": due_raw[:10] if due_raw else "",
+                                "priority_rank": rank,
+                                "priority_label": label,
                                 "entity_id": str(todo_entity),
                             }
                         )
@@ -476,8 +491,18 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                     for _ in range(int(state.state)):
                         open_todos.append(f"{todo_entity} item")
                         open_todo_details.append(
-                            {"summary": f"{todo_entity} item", "description": "", "entity_id": str(todo_entity)}
+                            {
+                                "summary": f"{todo_entity} item",
+                                "description": "",
+                                "due": "",
+                                "priority_rank": 3,
+                                "priority_label": "normal",
+                                "entity_id": str(todo_entity),
+                            }
                         )
+
+        open_todo_details = sort_project_items_by_priority(open_todo_details)
+        open_todos = [str(item["summary"]) for item in open_todo_details]
 
         energy_info = ""
         energy_entity = config.get(CONF_CONTEXT_ENERGY_SENSOR)
@@ -619,7 +644,8 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             if open_project_count is not None
             else self._last_open_project_count
         )
-        baseline_load = compute_project_baseline(proj_count, config)
+        proj_items = list(self._last_open_project_items) if self._last_open_project_items else None
+        baseline_load = compute_project_baseline(proj_count, config, project_items=proj_items)
 
         for day in rebalanced.values():
             day.base_score = day.base_score or day.score
@@ -752,7 +778,13 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         max_weekend = max(0, min(4, int(config.get(CONF_MAX_PROJECT_STEPS_WEEKEND, DEFAULT_MAX_PROJECT_STEPS_WEEKEND))))
         max_weekday = max(0, min(2, int(config.get(CONF_MAX_PROJECT_STEPS_WEEKDAY, DEFAULT_MAX_PROJECT_STEPS_WEEKDAY))))
 
-        remaining = list(project_steps)
+        remaining = [
+            pair[1]
+            for pair in sorted(
+                enumerate(project_steps),
+                key=lambda p: (int(p[1].get("priority_rank", 3)), p[0]),
+            )
+        ]
         weekend_slots = [(10, 0), (14, 30), (11, 15), (16, 0)]
         weekday_slots = [(17, 15), (17, 50)]
 

@@ -115,12 +115,122 @@ NOISY_WORK_KEYWORDS = (
 )
 
 
-def compute_project_baseline(open_count: int, config: dict[str, Any]) -> int:
-    """Return capped daily mental load percentage for ongoing unscheduled project To-Dos."""
+def extract_todo_priority(
+    summary: str,
+    description: str = "",
+    due: str | None = None,
+    reference_date: datetime.date | None = None,
+) -> tuple[int, str]:
+    """Return (rank 1..4, label) from Anytype Priority, due date urgency, or In Progress status."""
+    combined = f"{summary} {description}".lower()
+
+    high_markers = (
+        "prio: hoch",
+        "prio: high",
+        "priority: hoch",
+        "priority: high",
+        "prio: 1",
+        "prio: p1",
+        "[p1]",
+        "!1",
+        "[hoch]",
+        "[high]",
+        "🔥",
+        "dringend",
+        "urgent",
+    )
+    if any(tok in combined for tok in high_markers):
+        return 1, "high"
+
+    if due:
+        due_text = str(due).strip()[:10]
+        try:
+            due_date = datetime.date.fromisoformat(due_text)
+            ref = reference_date or datetime.date.today()
+            if (due_date - ref).days <= 7:
+                return 1, "high"
+        except ValueError:
+            pass
+
+    low_markers = (
+        "prio: niedrig",
+        "prio: low",
+        "priority: niedrig",
+        "priority: low",
+        "prio: 3",
+        "prio: p3",
+        "[p3]",
+        "!3",
+        "[niedrig]",
+        "[low]",
+    )
+    if any(tok in combined for tok in low_markers):
+        return 4, "low"
+
+    medium_markers = (
+        "prio: mittel",
+        "prio: medium",
+        "priority: mittel",
+        "priority: medium",
+        "prio: 2",
+        "prio: p2",
+        "[p2]",
+        "!2",
+        "[mittel]",
+        "[medium]",
+        "status: in progress",
+    )
+    if any(tok in combined for tok in medium_markers):
+        return 2, "medium"
+
+    return 3, "normal"
+
+
+def _resolve_item_priority(item: dict[str, Any]) -> tuple[int, str]:
+    """Read cached priority fields on a todo dict or extract them deterministically."""
+    if "priority_rank" in item and "priority_label" in item:
+        return int(item["priority_rank"]), str(item["priority_label"])
+    return extract_todo_priority(
+        summary=str(item.get("summary") or ""),
+        description=str(item.get("description") or ""),
+        due=item.get("due"),
+    )
+
+
+def sort_project_items_by_priority(project_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return project items sorted stably from highest priority & earliest due date to lowest."""
+    indexed = list(enumerate(project_items))
+    indexed.sort(
+        key=lambda pair: (
+            _resolve_item_priority(pair[1])[0],
+            str(pair[1].get("due") or "9999-12-31"),
+            pair[0],
+        )
+    )
+    return [pair[1] for pair in indexed]
+
+
+def compute_project_baseline(
+    open_count: int,
+    config: dict[str, Any],
+    project_items: list[dict[str, Any]] | None = None,
+) -> int:
+    """Return capped daily mental load percentage weighted by task priority (Hoch=1.5x, Mittel/Normal=1.0x, Niedrig=0.5x)."""
     if open_count <= 0:
         return 0
     per_item = max(0.0, float(config.get(CONF_PROJECT_BASELINE_PER_ITEM, DEFAULT_PROJECT_BASELINE_PER_ITEM)))
     cap = max(0, min(40, int(config.get(CONF_PROJECT_BASELINE_CAP, DEFAULT_PROJECT_BASELINE_CAP))))
+    if project_items:
+        total = 0.0
+        for item in project_items:
+            rank, _ = _resolve_item_priority(item)
+            if rank == 1:
+                total += per_item * 1.5
+            elif rank == 4:
+                total += per_item * 0.5
+            else:
+                total += per_item
+        return min(cap, round(total))
     return min(cap, round(open_count * per_item))
 
 
@@ -844,7 +954,7 @@ def analyze_day_heuristic(
 
 
 def build_project_breakdown_prompt(
-    project_items: list[dict[str, str]],
+    project_items: list[dict[str, Any]],
     config: dict[str, Any],
 ) -> tuple[str, str]:
     """Build (system_prompt, user_prompt) to decompose ongoing To-Dos into small weekend/weekday sub-tasks."""
@@ -858,40 +968,74 @@ def build_project_breakdown_prompt(
         "You break large household/renovation/garden/admin To-Do items into realistic 20-45 minute starter steps "
         "that can be scheduled onto calm weekends or free weekday afternoons.\n"
         f"{lang_line}\n"
+        "PRIORITY RULES:\n"
+        "- The items are already ordered from highest to lowest priority.\n"
+        "- For [PRIO: HOCH] and [PRIO: MITTEL] items, return 2 concrete sequential steps first.\n"
+        "- For [PRIO: NIEDRIG] items, return at most 1 brief starter step at the end.\n"
         "CRITICAL SUNDAY CONSTRAINT: On Sundays in Germany shops, hardware stores (Baumarkt), TÜV, offices, doctors, "
         "and phone hotlines are CLOSED, and noisy power tools/garden machinery (schleifen, bohren, sägen, vertikutieren, mähen) "
         "are FORBIDDEN. Therefore mark EVERY step accurately with `requires_open_business` and `is_noisy`.\n"
-        "Return ONLY a single JSON object:\n"
+        "Return ONLY a single JSON object ordered from highest to lowest priority:\n"
         '{"steps": [{"source_todo": "<exact summary>", "title": "<short 20-45m step title>", '
         '"duration_minutes": 30, "load_contribution": 10, '
         '"requires_open_business": false, "is_noisy": false, '
         '"checklist": ["<step 1>", "<step 2>"]}]}'
     )
 
+    sorted_items = sort_project_items_by_priority(project_items)
+    prio_badges = {
+        1: "PRIO: HOCH",
+        2: "PRIO: MITTEL",
+        3: "PRIO: NORMAL",
+        4: "PRIO: NIEDRIG",
+    }
     lines = []
-    for idx, item in enumerate(project_items[:25], start=1):
+    for idx, item in enumerate(sorted_items[:25], start=1):
         summary = str(item.get("summary") or "").strip()
         desc = str(item.get("description") or "").strip()
+        due = str(item.get("due") or "").strip()
+        rank, _ = _resolve_item_priority(item)
+        prio_tag = f"[{prio_badges.get(rank, 'PRIO: NORMAL')}] "
+        due_note = f" | Fällig: {due[:10]}" if due else ""
         desc_note = f" — Details: {desc[:180]}" if desc else ""
-        lines.append(f"{idx}. {summary}{desc_note}")
+        lines.append(f"{idx}. {prio_tag}{summary}{due_note}{desc_note}")
 
     user_prompt = (
-        "Decompose each open project/To-Do below into 1-2 concrete small 20-45 min steps (planning/measuring/quiet indoor prep "
-        "separate from shopping/TÜV/calls or noisy work so calm Sundays can still get quiet prep steps):\n\n"
+        "Decompose each open project/To-Do below into concrete small 20-45 min steps ordered strictly by priority "
+        "(keep planning/measuring/quiet indoor prep separate from shopping/TÜV/calls or noisy work so calm Sundays can still get quiet prep steps):\n\n"
         + "\n".join(lines)
     )
     return system_prompt, user_prompt
 
 
+def _match_source_priority(
+    source_todo: str,
+    combined_text: str,
+    project_items: list[dict[str, Any]] | None,
+) -> tuple[int, str]:
+    """Find matching source todo item priority or infer from text."""
+    if project_items:
+        target = source_todo.strip().lower()
+        for item in project_items:
+            if str(item.get("summary") or "").strip().lower() == target:
+                return _resolve_item_priority(item)
+        for item in project_items:
+            cand = str(item.get("summary") or "").strip().lower()
+            if cand and (cand in target or target in cand):
+                return _resolve_item_priority(item)
+    return extract_todo_priority(source_todo, combined_text)
+
+
 def parse_project_breakdown_response(
     raw_text: str,
     config: dict[str, Any],
+    project_items: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Parse LLM JSON response of project sub-steps and enforce Sunday safety classification."""
+    """Parse LLM JSON response of project sub-steps and enforce priority & Sunday safety classification."""
     payload = _extract_json_object(raw_text)
     raw_steps = payload.get("steps") or []
     parsed: list[dict[str, Any]] = []
-    for item in raw_steps:
+    for idx, item in enumerate(raw_steps):
         if not isinstance(item, dict):
             continue
         source_todo = str(item.get("source_todo") or "").strip()
@@ -908,6 +1052,7 @@ def parse_project_breakdown_response(
             raw_requires_open=item.get("requires_open_business"),
             raw_is_noisy=item.get("is_noisy"),
         )
+        prio_rank, prio_label = _match_source_priority(source_todo or raw_title, combined_text, project_items)
         parsed.append(
             {
                 "source_todo": source_todo or raw_title,
@@ -917,28 +1062,36 @@ def parse_project_breakdown_response(
                 "requires_open_business": req_open,
                 "is_noisy": noisy,
                 "checklist": checklist[:4],
+                "priority_rank": prio_rank,
+                "priority_label": prio_label,
+                "_order": idx,
             }
         )
+    parsed.sort(key=lambda s: (int(s["priority_rank"]), int(s["_order"])))
+    for step in parsed:
+        step.pop("_order", None)
     return parsed
 
 
 def decompose_project_todos_heuristic(
-    project_items: list[dict[str, str]],
+    project_items: list[dict[str, Any]],
     config: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Deterministic fallback that decomposes open project To-Dos into 20-45 min starter steps."""
+    """Deterministic fallback that decomposes open project To-Dos into priority-ordered 20-45 min starter steps."""
     language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
     is_de = language.startswith("de")
     steps: list[dict[str, Any]] = []
 
-    for item in project_items[:25]:
+    for item in sort_project_items_by_priority(project_items)[:25]:
         summary = str(item.get("summary") or "").strip()
         desc = str(item.get("description") or "").strip()
         if not summary:
             continue
+        prio_rank, prio_label = _resolve_item_priority(item)
         combined = f"{summary} {desc}"
         req_open, noisy = infer_step_sunday_restrictions(combined)
 
+        generated_for_item: list[dict[str, Any]] = []
         # Always generate a quiet planning/prep starter step first (safe for Sunday!)
         if any(k in combined.lower() for k in ("tüv", "werkstatt", "arzt", "termin")):
             quiet_title = (
@@ -951,7 +1104,7 @@ def decompose_project_todos_heuristic(
                 if is_de
                 else ["Gather required papers", "Note preferred time slots"]
             )
-            steps.append(
+            generated_for_item.append(
                 {
                     "source_todo": summary,
                     "title": quiet_title,
@@ -960,6 +1113,8 @@ def decompose_project_todos_heuristic(
                     "requires_open_business": False,
                     "is_noisy": False,
                     "checklist": quiet_checks,
+                    "priority_rank": prio_rank,
+                    "priority_label": prio_label,
                 }
             )
             action_title = (
@@ -972,7 +1127,7 @@ def decompose_project_todos_heuristic(
                 if is_de
                 else ["Call/visit during opening hours", "Save confirmed slot to calendar"]
             )
-            steps.append(
+            generated_for_item.append(
                 {
                     "source_todo": summary,
                     "title": action_title,
@@ -981,6 +1136,8 @@ def decompose_project_todos_heuristic(
                     "requires_open_business": True,
                     "is_noisy": False,
                     "checklist": action_checks,
+                    "priority_rank": prio_rank,
+                    "priority_label": prio_label,
                 }
             )
         elif noisy or any(k in combined.lower() for k in ("og:", "elektrik", "heizung", "bad", "zimmer", "fenster", "abdicht", "fussboden", "strom", "teich", "solar")):
@@ -994,7 +1151,7 @@ def decompose_project_todos_heuristic(
                 if is_de
                 else ["Check current state & measurements", "List missing supplies"]
             )
-            steps.append(
+            generated_for_item.append(
                 {
                     "source_todo": summary,
                     "title": plan_title,
@@ -1003,6 +1160,8 @@ def decompose_project_todos_heuristic(
                     "requires_open_business": False,
                     "is_noisy": False,
                     "checklist": plan_checks,
+                    "priority_rank": prio_rank,
+                    "priority_label": prio_label,
                 }
             )
             work_title = (
@@ -1015,7 +1174,7 @@ def decompose_project_todos_heuristic(
                 if is_de
                 else ["Prepare tools/materials", "Finish one bounded sub-task cleanly"]
             )
-            steps.append(
+            generated_for_item.append(
                 {
                     "source_todo": summary,
                     "title": work_title,
@@ -1024,6 +1183,8 @@ def decompose_project_todos_heuristic(
                     "requires_open_business": req_open,
                     "is_noisy": noisy or any(k in combined.lower() for k in ("schleifen", "elektrik", "fenster", "strom")),
                     "checklist": work_checks,
+                    "priority_rank": prio_rank,
+                    "priority_label": prio_label,
                 }
             )
         else:
@@ -1031,7 +1192,7 @@ def decompose_project_todos_heuristic(
                 f"Teil-Schritt: {summary}" if is_de else f"Starter step: {summary}",
                 "project_step",
             )
-            steps.append(
+            generated_for_item.append(
                 {
                     "source_todo": summary,
                     "title": title,
@@ -1044,6 +1205,14 @@ def decompose_project_todos_heuristic(
                         if is_de
                         else ["Scope first 30m step", "Update progress note when done"]
                     ),
+                    "priority_rank": prio_rank,
+                    "priority_label": prio_label,
                 }
             )
+
+        # Low-priority items get at most 1 brief starter step
+        if prio_rank >= 4:
+            steps.extend(generated_for_item[:1])
+        else:
+            steps.extend(generated_for_item)
     return steps
