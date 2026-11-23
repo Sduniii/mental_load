@@ -133,6 +133,8 @@ async def test_integration_setup_and_config_flow_import() -> None:
     assert hass.services.has_service("mental_load", "refresh")
     assert hass.services.has_service("mental_load", "submit_feedback")
     assert hass.services.has_service("mental_load", "push_hidden_tasks")
+    assert hass.services.has_service("mental_load", "toggle_checklist_item")
+    assert hass.services.has_service("mental_load", "sync_external_calendar")
 
     flow = config_flow.MentalLoadConfigFlow()
     assert flow.VERSION == 1
@@ -140,3 +142,29 @@ async def test_integration_setup_and_config_flow_import() -> None:
         ConfigEntry(entry_id="x", data={})
     )
     assert opt_flow is not None
+
+
+async def test_native_todo_entity_and_ical_feed() -> None:
+    from homeassistant.components.todo import TodoItemStatus
+    from custom_components.mental_load.ical_view import build_ical_payload
+    from custom_components.mental_load.todo import MentalLoadTodoListEntity
+
+    coord, entry = _build_populated_coordinator()
+    todo_ent = MentalLoadTodoListEntity(coord, entry)
+
+    items = todo_ent.todo_items
+    assert len(items) == 2
+    assert all(i.status == TodoItemStatus.NEEDS_ACTION for i in items)
+
+    # Toggle first checklist item through TodoListEntity
+    first_item = items[0]
+    first_item.status = TodoItemStatus.COMPLETED
+    await todo_ent.async_update_todo_item(first_item)
+    assert todo_ent.todo_items[0].status == TodoItemStatus.COMPLETED
+
+    # Verify iCal RFC 5545 output reflects [x] completion and badges
+    ics = build_ical_payload([coord])
+    assert "BEGIN:VCALENDAR" in ics
+    assert "BEGIN:VEVENT" in ics
+    assert "[x] Geschenk einpacken" in ics
+    assert "Mental Load" in ics

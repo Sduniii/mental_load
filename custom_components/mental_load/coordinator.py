@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import json
 import logging
+import secrets
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -16,6 +17,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_API_KEY,
     CONF_AUTO_PUSH_TODO,
+    CONF_AUTO_SYNC_CALENDAR,
     CONF_BASE_URL,
     CONF_CALENDARS,
     CONF_CONTEXT_ENERGY_SENSOR,
@@ -30,6 +32,7 @@ from .const import (
     CONF_REACTION_ENTITY,
     CONF_REACTION_ON_CRITICAL,
     CONF_REACTION_ON_WARNING,
+    CONF_TARGET_CALENDAR_ENTITY,
     CONF_TARGET_TODO_ENTITY,
     CONF_UPDATE_INTERVAL,
     CONF_USER_PROFILE,
@@ -81,6 +84,11 @@ def _parse_event_boundary(raw_value: Any, tz: datetime.tzinfo | None) -> tuple[d
     return dt_val, False
 
 
+def make_checklist_item_uid(task_uid: str, step_index: int) -> str:
+    """Create a stable UID for an individual checklist step inside a HiddenTask."""
+    return f"{task_uid}:step:{step_index}"
+
+
 class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
     """Coordinates calendar reading, AI scoring, caching, todo push, and reactions."""
 
@@ -108,6 +116,9 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self._cache: dict[str, dict[str, Any]] = {}
         self.feedback_history: list[FeedbackEntry] = []
         self._pushed_todo_uids: set[str] = set()
+        self.completed_item_uids: set[str] = set()
+        self._synced_calendar_uids: set[str] = set()
+        self.ical_token: str = secrets.token_urlsafe(24)
         self._notified_thresholds: dict[str, str] = {}
         self._force_refresh = False
 
@@ -129,6 +140,10 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             for item in stored.get("feedback_history", [])
         ]
         self._pushed_todo_uids = set(stored.get("pushed_todo_uids", []))
+        self.completed_item_uids = set(stored.get("completed_item_uids", []))
+        self._synced_calendar_uids = set(stored.get("synced_calendar_uids", []))
+        if stored.get("ical_token"):
+            self.ical_token = str(stored["ical_token"])
         self._notified_thresholds = dict(stored.get("notified_thresholds", {}))
         self._state_loaded = True
 
@@ -139,6 +154,9 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                 "cache": self._cache,
                 "feedback_history": [f.to_dict() for f in self.feedback_history[-MAX_FEEDBACK_HISTORY:]],
                 "pushed_todo_uids": sorted(self._pushed_todo_uids),
+                "completed_item_uids": sorted(self.completed_item_uids),
+                "synced_calendar_uids": sorted(self._synced_calendar_uids),
+                "ical_token": self.ical_token,
                 "notified_thresholds": self._notified_thresholds,
             }
         )
@@ -211,6 +229,13 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             await self.async_push_hidden_tasks_to_todo(
                 target_date=today.isoformat(),
                 todo_entity=config[CONF_TARGET_TODO_ENTITY],
+                analyses=results,
+                save_after=False,
+            )
+
+        if config.get(CONF_AUTO_SYNC_CALENDAR) and config.get(CONF_TARGET_CALENDAR_ENTITY):
+            await self.async_sync_to_external_calendar(
+                target_calendar=config[CONF_TARGET_CALENDAR_ENTITY],
                 analyses=results,
                 save_after=False,
             )
@@ -444,6 +469,104 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         if save_after and pushed_count > 0:
             await self._async_save_state()
         return pushed_count
+
+    async def async_toggle_checklist_item(
+        self,
+        item_uid: str,
+        completed: bool | None = None,
+    ) -> bool:
+        """Toggle or explicitly set completion state for an invisible task checklist item."""
+        await self.async_load_state()
+        is_currently_done = item_uid in self.completed_item_uids
+        new_done = (not is_currently_done) if completed is None else bool(completed)
+        if new_done:
+            self.completed_item_uids.add(item_uid)
+        else:
+            self.completed_item_uids.discard(item_uid)
+        await self._async_save_state()
+        if hasattr(self, "async_set_updated_data") and self.data is not None:
+            self.async_set_updated_data(self.data)
+        return new_done
+
+    async def async_sync_to_external_calendar(
+        self,
+        target_calendar: str | None = None,
+        analyses: dict[str, DayLoadAnalysis] | None = None,
+        save_after: bool = True,
+    ) -> int:
+        """Sync daily badges & invisible head-task blocks into a dedicated external calendar (e.g. Google Calendar).
+
+        Safety guard: strictly refuses to write to any read-only source calendar in CONF_CALENDARS.
+        """
+        await self.async_load_state()
+        config = self.merged_config
+        target_cal = str(target_calendar or config.get(CONF_TARGET_CALENDAR_ENTITY) or "").strip()
+        if not target_cal:
+            return 0
+
+        source_cals = {str(c) for c in (config.get(CONF_CALENDARS) or [])}
+        if target_cal in source_cals:
+            _LOGGER.warning(
+                "Refusing to write Mental Load sync events into source calendar '%s'. "
+                "Please create a dedicated secondary calendar (e.g. 'Mental Load' in Google Calendar) as target.",
+                target_cal,
+            )
+            return 0
+
+        source_map = analyses if analyses is not None else (self.data or {})
+        synced_count = 0
+
+        for day in sorted(source_map.values(), key=lambda d: d.date):
+            badge_key = f"badge:{target_cal}:{day.date.isoformat()}:{day.score}"
+            if badge_key not in self._synced_calendar_uids:
+                try:
+                    await self.hass.services.async_call(
+                        "calendar",
+                        "create_event",
+                        {
+                            "entity_id": target_cal,
+                            "summary": day.badge_summary,
+                            "start_date": day.date.isoformat(),
+                            "end_date": (day.date + datetime.timedelta(days=1)).isoformat(),
+                            "description": f"{day.reasoning}\n\n[ML-BADGE-{day.date.isoformat()}]",
+                        },
+                        blocking=True,
+                    )
+                    self._synced_calendar_uids.add(badge_key)
+                    synced_count += 1
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.error("Failed syncing day badge to %s: %s", target_cal, err)
+
+            for task in day.hidden_tasks:
+                task_key = f"task:{target_cal}:{task.uid}"
+                if task_key in self._synced_calendar_uids:
+                    continue
+                checklist_lines = "\n".join(f"- [ ] {step}" for step in task.checklist)
+                desc = (
+                    f"Ausgelöst durch: {task.parent_event_summary}\n"
+                    f"{checklist_lines}\n\n[ML-TASK-{task.uid}]"
+                ).strip()
+                try:
+                    await self.hass.services.async_call(
+                        "calendar",
+                        "create_event",
+                        {
+                            "entity_id": target_cal,
+                            "summary": f"{task.title} (+{task.load_contribution}%)",
+                            "start_date_time": task.start.isoformat(),
+                            "end_date_time": task.end.isoformat(),
+                            "description": desc,
+                        },
+                        blocking=True,
+                    )
+                    self._synced_calendar_uids.add(task_key)
+                    synced_count += 1
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.error("Failed syncing hidden task '%s' to %s: %s", task.title, target_cal, err)
+
+        if save_after and synced_count > 0:
+            await self._async_save_state()
+        return synced_count
 
     async def _async_evaluate_reactions(
         self,

@@ -16,14 +16,17 @@ from .const import (
     SERVICE_PUSH_HIDDEN_TASKS,
     SERVICE_REFRESH,
     SERVICE_SUBMIT_FEEDBACK,
+    SERVICE_SYNC_EXTERNAL_CALENDAR,
+    SERVICE_TOGGLE_CHECKLIST_ITEM,
     VERSION,
 )
 from .coordinator import MentalLoadCoordinator
 from .frontend import JSModuleRegistration
+from .ical_view import MentalLoadICalView
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = ["calendar", "sensor"]
+PLATFORMS: list[str] = ["calendar", "sensor", "todo"]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
@@ -46,9 +49,11 @@ def _get_coordinators(hass: HomeAssistant, entry_id: str | None = None) -> list[
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Set up domain-level services, WebSocket API, and Lovelace card registration."""
+    """Set up domain-level services, WebSocket API, iCal feed, and Lovelace card registration."""
     hass.data.setdefault(DOMAIN, {})
     websocket_api.async_register_command(hass, _ws_get_version)
+    if hasattr(hass, "http") and hasattr(hass.http, "register_view"):
+        hass.http.register_view(MentalLoadICalView(hass))
 
     async def _setup_frontend(_event: Any = None) -> None:
         try:
@@ -87,6 +92,17 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                 target_date=target_date,
                 todo_entity=todo_entity,
             )
+
+    async def _handle_toggle_checklist_item(call: ServiceCall) -> None:
+        item_uid = str(call.data["item_uid"])
+        completed = call.data.get("completed")
+        for coord in _get_coordinators(hass, call.data.get("entry_id")):
+            await coord.async_toggle_checklist_item(item_uid=item_uid, completed=completed)
+
+    async def _handle_sync_external_calendar(call: ServiceCall) -> None:
+        calendar_entity = call.data.get("calendar_entity")
+        for coord in _get_coordinators(hass, call.data.get("entry_id")):
+            await coord.async_sync_to_external_calendar(target_calendar=calendar_entity)
 
     if not hass.services.has_service(DOMAIN, SERVICE_REFRESH):
         hass.services.async_register(
@@ -129,6 +145,33 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
                     vol.Optional("entry_id"): cv.string,
                     vol.Optional("date"): cv.string,
                     vol.Optional("todo_entity"): cv.entity_id,
+                }
+            ),
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_TOGGLE_CHECKLIST_ITEM):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_TOGGLE_CHECKLIST_ITEM,
+            _handle_toggle_checklist_item,
+            schema=vol.Schema(
+                {
+                    vol.Optional("entry_id"): cv.string,
+                    vol.Required("item_uid"): cv.string,
+                    vol.Optional("completed"): cv.boolean,
+                }
+            ),
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SYNC_EXTERNAL_CALENDAR):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SYNC_EXTERNAL_CALENDAR,
+            _handle_sync_external_calendar,
+            schema=vol.Schema(
+                {
+                    vol.Optional("entry_id"): cv.string,
+                    vol.Optional("calendar_entity"): cv.entity_id,
                 }
             ),
         )

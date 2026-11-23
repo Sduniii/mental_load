@@ -2,6 +2,12 @@
 
 Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Modell deiner Wahl, berechne den täglichen **Mental Load (0–100%)**, mache **unsichtbare Kopf-Aufgaben** direkt in `calendar.mental_load` sichtbar und löse aktive Smart-Home-Reaktionen aus.
 
+## Neu in v1.3.0
+
+- ✅ **Echte abhakbare To-Dos (`todo.mental_load_aufgaben`):** Alle Checklisten-Schritte sind direkt im HA To-Do-Tab und in der Dashboard-Card abhakbar.
+- 📱 **iOS & Multi-Device Sync:** Sync in einen separaten Google Kalender **oder** direktes iOS-Kalenderabo über `/api/mental_load/calendar.ics`.
+- 🎨 **Dynamische Multi-Device Custom Card:** Klickbare 7-Tage-Timeline, interaktive Checkboxen, Fortschrittsanzeige und Quick-Sync-Buttons.
+
 ## Highlights
 
 - **Multi-LLM Support (inkl. ohne API-Key):** **Antigravity CLI (`agy`)** (direkt oder über `tools/agy_bridge_server.py`), OpenAI, Anthropic, Mistral, Google Gemini, Ollama / Custom OpenAI URLs, Home Assistant Conversation Agent sowie lokale Offline-Heuristik als Fallback.

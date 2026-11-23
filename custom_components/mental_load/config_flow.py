@@ -13,6 +13,7 @@ from .const import (
     ALL_PROVIDERS,
     CONF_API_KEY,
     CONF_AUTO_PUSH_TODO,
+    CONF_AUTO_SYNC_CALENDAR,
     CONF_BASE_URL,
     CONF_CALENDARS,
     CONF_CONTEXT_ENERGY_SENSOR,
@@ -31,6 +32,7 @@ from .const import (
     CONF_REACTION_ON_CRITICAL,
     CONF_REACTION_ON_WARNING,
     CONF_SHOW_HIDDEN_TASK_BLOCKS,
+    CONF_TARGET_CALENDAR_ENTITY,
     CONF_TARGET_TODO_ENTITY,
     CONF_TEMPERATURE,
     CONF_UPDATE_INTERVAL,
@@ -185,6 +187,10 @@ class MentalLoadConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_TARGET_TODO_ENTITY): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="todo")
                 ),
+                vol.Optional(CONF_AUTO_SYNC_CALENDAR, default=False): selector.BooleanSelector(),
+                vol.Optional(CONF_TARGET_CALENDAR_ENTITY): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="calendar")
+                ),
                 vol.Optional(CONF_WARNING_THRESHOLD, default=DEFAULT_WARNING_THRESHOLD): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=20, max=95, step=5, mode=selector.NumberSelectorMode.SLIDER)
                 ),
@@ -325,6 +331,7 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
                 selector.NumberSelectorConfig(min=5, max=60, step=5, mode=selector.NumberSelectorMode.BOX)
             ),
             vol.Optional(CONF_AUTO_PUSH_TODO, default=self._cur(CONF_AUTO_PUSH_TODO, False)): selector.BooleanSelector(),
+            vol.Optional(CONF_AUTO_SYNC_CALENDAR, default=self._cur(CONF_AUTO_SYNC_CALENDAR, False)): selector.BooleanSelector(),
         }
 
         target_todo = self._cur(CONF_TARGET_TODO_ENTITY)
@@ -333,6 +340,13 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
             if target_todo
             else vol.Optional(CONF_TARGET_TODO_ENTITY)
         ] = selector.EntitySelector(selector.EntitySelectorConfig(domain="todo"))
+
+        target_cal = self._cur(CONF_TARGET_CALENDAR_ENTITY)
+        schema_dict[
+            vol.Optional(CONF_TARGET_CALENDAR_ENTITY, default=target_cal)
+            if target_cal
+            else vol.Optional(CONF_TARGET_CALENDAR_ENTITY)
+        ] = selector.EntitySelector(selector.EntitySelectorConfig(domain="calendar"))
 
         return self.async_show_form(step_id="calendar_and_todo", data_schema=vol.Schema(schema_dict))
 

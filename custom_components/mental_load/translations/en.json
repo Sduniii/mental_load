@@ -33,6 +33,8 @@
           "show_hidden_task_blocks": "Show invisible head-tasks as blocks in calendar.mental_load",
           "auto_push_todo": "Automatically push hidden tasks to To-Do list",
           "target_todo_entity": "Target To-Do List",
+          "auto_sync_calendar": "Auto-sync badges & hidden tasks to dedicated target calendar (e.g. secondary Google Calendar for iOS)",
+          "target_calendar_entity": "Dedicated Target Calendar (e.g. separate Google Calendar)",
           "warning_threshold": "Warning Threshold (%)",
           "critical_threshold": "Critical Threshold (%)",
           "notify_service": "Notification Service",
@@ -91,7 +93,9 @@
           "default_travel_minutes": "Default Travel Buffer (Min)",
           "default_followup_minutes": "Default Follow-up Time (Min)",
           "auto_push_todo": "Auto-push hidden tasks to To-Do list",
-          "target_todo_entity": "Target To-Do List"
+          "target_todo_entity": "Target To-Do List",
+          "auto_sync_calendar": "Auto-sync to dedicated target calendar (e.g. secondary Google Calendar for iOS)",
+          "target_calendar_entity": "Dedicated Target Calendar"
         }
       },
       "active_reactions": {

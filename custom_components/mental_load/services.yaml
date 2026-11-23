@@ -64,3 +64,28 @@ push_hidden_tasks:
       selector:
         entity:
           domain: todo
+
+toggle_checklist_item:
+  name: Kopf-Aufgaben-Punkt abhaken
+  description: Hakt einen einzelnen Schritt aus einer unsichtbaren Kopf-Aufgabe ab oder öffnet ihn wieder.
+  fields:
+    item_uid:
+      name: Aufgaben-Punkt UID
+      required: true
+      selector:
+        text:
+    completed:
+      name: Erledigt
+      selector:
+        boolean:
+
+sync_external_calendar:
+  name: In externen Kalender (z. B. extra Google Kalender) synchronisieren
+  description: Überträgt Mental-Load-Badges und Kopf-Aufgaben-Blöcke in einen separaten schreibbaren Ziel-Kalender für iOS & alle Geräte.
+  fields:
+    calendar_entity:
+      name: Ziel-Kalender
+      description: Separater Ziel-Kalender (darf kein Quell-Kalender sein).
+      selector:
+        entity:
+          domain: calendar

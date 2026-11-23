@@ -21,6 +21,20 @@ jobs:
         id: tag
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          python3 - <<'PY'
+          import os, re
+          tag = os.environ["TAG_NAME"].lstrip("v")
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          pattern = rf"^## \[{re.escape(tag)}\][^\n]*\n(.*?)(?=^## \[|\Z)"
+          m = re.search(pattern, text, flags=re.MULTILINE | re.DOTALL)
+          notes = m.group(1).strip() if m else f"Release {tag}"
+          open("release_notes.md", "w", encoding="utf-8").write(notes + "\n")
+          PY
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.tag }}
+
       - name: Build zip
         run: |
           cd custom_components
@@ -32,5 +46,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
+          body_path: release_notes.md
           files: mental_load.zip
           fail_on_unmatched_files: true

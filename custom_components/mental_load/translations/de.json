@@ -33,6 +33,8 @@
           "show_hidden_task_blocks": "Unsichtbare Kopf-Aufgaben als Zeitblöcke in calendar.mental_load anzeigen",
           "auto_push_todo": "Erkannte Kopf-Aufgaben automatisch in To-Do-Liste pushen",
           "target_todo_entity": "Ziel To-Do-Liste",
+          "auto_sync_calendar": "Termine & Kopf-Aufgaben automatisch in separaten Ziel-Kalender (z. B. extra Google Kalender für iOS) syncen",
+          "target_calendar_entity": "Separater Ziel-Kalender (z. B. eigener Google Kalender)",
           "warning_threshold": "Warn-Schwellenwert (%)",
           "critical_threshold": "Kritisch-Schwellenwert (%)",
           "notify_service": "Benachrichtigungs-Dienst (z. B. notify.mobile_app_...)",
@@ -91,7 +93,9 @@
           "default_travel_minutes": "Standard-Fahrzeit/Puffer (Min)",
           "default_followup_minutes": "Standard-Nachbereitungszeit (Min)",
           "auto_push_todo": "Kopf-Aufgaben automatisch in To-Do-Liste pushen",
-          "target_todo_entity": "Ziel To-Do-Liste"
+          "target_todo_entity": "Ziel To-Do-Liste",
+          "auto_sync_calendar": "Automatisch in separaten Ziel-Kalender (z. B. extra Google Kalender für iOS) synchronisieren",
+          "target_calendar_entity": "Separater Ziel-Kalender (z. B. eigener Google Kalender)"
         }
       },
       "active_reactions": {

@@ -61,3 +61,5 @@ In Home Assistant wählst du dann als Provider **Antigravity CLI (agy – kein A
 ```bash
 pytest tests -v
 ```
+
+Siehe [CHANGELOG.md](CHANGELOG.md) für alle Änderungen pro Version.

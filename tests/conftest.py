@@ -57,6 +57,7 @@ def _install_ha_shims() -> None:
     ha_components = types.ModuleType("homeassistant.components")
     ha_comp_calendar = types.ModuleType("homeassistant.components.calendar")
     ha_comp_sensor = types.ModuleType("homeassistant.components.sensor")
+    ha_comp_todo = types.ModuleType("homeassistant.components.todo")
     ha_comp_ws = types.ModuleType("homeassistant.components.websocket_api")
     ha_comp_http = types.ModuleType("homeassistant.components.http")
     ha_comp_conv = types.ModuleType("homeassistant.components.conversation")
@@ -204,12 +205,56 @@ def _install_ha_shims() -> None:
     ha_comp_sensor.SensorEntity = SensorEntity
     ha_comp_sensor.SensorStateClass = SensorStateClass
 
+    # Todo shims
+    class TodoItemStatus:
+        NEEDS_ACTION = "needs_action"
+        COMPLETED = "completed"
+
+    class TodoListEntityFeature:
+        UPDATE_TODO_ITEM = 1
+        SET_DUE_DATETIME_ON_ITEM = 2
+        SET_DESCRIPTION_ON_ITEM = 4
+
+    @dataclass
+    class TodoItem:
+        uid: str | None = None
+        summary: str | None = None
+        status: str | None = None
+        due: Any = None
+        description: str | None = None
+
+    class TodoListEntity:
+        pass
+
+    ha_comp_todo.TodoItem = TodoItem
+    ha_comp_todo.TodoItemStatus = TodoItemStatus
+    ha_comp_todo.TodoListEntity = TodoListEntity
+    ha_comp_todo.TodoListEntityFeature = TodoListEntityFeature
+
+    # aiohttp.web shim if aiohttp is absent
+    if "aiohttp" not in sys.modules:
+        aiohttp_mod = types.ModuleType("aiohttp")
+        aiohttp_web = types.ModuleType("aiohttp.web")
+
+        class _WebResponse:
+            def __init__(self, status: int = 200, text: str = "", headers: dict[str, str] | None = None) -> None:
+                self.status = status
+                self.text = text
+                self.headers = headers or {}
+
+        aiohttp_web.Response = _WebResponse
+        aiohttp_web.Request = object
+        aiohttp_mod.web = aiohttp_web
+        sys.modules["aiohttp"] = aiohttp_mod
+        sys.modules["aiohttp.web"] = aiohttp_web
+
     # Websocket & HTTP & Conversation & Lovelace
     ha_comp_ws.websocket_command = lambda schema: (lambda fn: fn)
     ha_comp_ws.async_response = lambda fn: fn
     ha_comp_ws.async_register_command = lambda hass, cmd: None
     ha_comp_ws.ActiveConnection = object
     ha_comp_http.StaticPathConfig = lambda url, path, cache: (url, path, cache)
+    ha_comp_http.HomeAssistantView = type("HomeAssistantView", (), {})
     ha_comp_conv.async_converse = AsyncMock()
     ha_comp_ll_const.LOVELACE_DATA = "lovelace"
 
@@ -230,6 +275,7 @@ def _install_ha_shims() -> None:
         "homeassistant.components": ha_components,
         "homeassistant.components.calendar": ha_comp_calendar,
         "homeassistant.components.sensor": ha_comp_sensor,
+        "homeassistant.components.todo": ha_comp_todo,
         "homeassistant.components.websocket_api": ha_comp_ws,
         "homeassistant.components.http": ha_comp_http,
         "homeassistant.components.conversation": ha_comp_conv,

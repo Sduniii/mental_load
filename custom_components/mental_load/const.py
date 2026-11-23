@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "mental_load"
-VERSION = "1.2.2"
+VERSION = "1.3.0"
 
 URL_BASE = "/mental_load_card"
 JSMODULES = [
@@ -87,6 +87,8 @@ CONF_DEFAULT_TRAVEL_MINUTES = "default_travel_minutes"
 CONF_DEFAULT_FOLLOWUP_MINUTES = "default_followup_minutes"
 CONF_AUTO_PUSH_TODO = "auto_push_todo"
 CONF_TARGET_TODO_ENTITY = "target_todo_entity"
+CONF_AUTO_SYNC_CALENDAR = "auto_sync_calendar"
+CONF_TARGET_CALENDAR_ENTITY = "target_calendar_entity"
 
 # Active Reactions
 CONF_WARNING_THRESHOLD = "warning_threshold"
@@ -164,6 +166,8 @@ ALL_FACTORS = (
 SERVICE_REFRESH = "refresh"
 SERVICE_SUBMIT_FEEDBACK = "submit_feedback"
 SERVICE_PUSH_HIDDEN_TASKS = "push_hidden_tasks"
+SERVICE_TOGGLE_CHECKLIST_ITEM = "toggle_checklist_item"
+SERVICE_SYNC_EXTERNAL_CALENDAR = "sync_external_calendar"
 
 EVENT_THRESHOLD_EXCEEDED = "mental_load_threshold_exceeded"
 EVENT_ANALYSIS_UPDATED = "mental_load_updated"

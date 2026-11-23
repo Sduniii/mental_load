@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 
 from custom_components.mental_load.const import (
     CONF_AUTO_PUSH_TODO,
+    CONF_AUTO_SYNC_CALENDAR,
     CONF_CALENDARS,
     CONF_CRITICAL_THRESHOLD,
     CONF_HORIZON_DAYS,
@@ -16,6 +17,7 @@ from custom_components.mental_load.const import (
     CONF_PROVIDER,
     CONF_REACTION_ENTITY,
     CONF_REACTION_ON_CRITICAL,
+    CONF_TARGET_CALENDAR_ENTITY,
     CONF_TARGET_TODO_ENTITY,
     CONF_WARNING_THRESHOLD,
     EVENT_THRESHOLD_EXCEEDED,
@@ -152,3 +154,39 @@ async def test_submit_feedback_stores_memory_and_recomputes() -> None:
     assert fb.perceived_score == 15
     assert len(coord.feedback_history) == 1
     assert coord.data["2026-11-23"].cached is False
+
+
+async def test_toggle_checklist_and_external_calendar_sync_guard() -> None:
+    hass = FakeHass()
+    today = datetime.date(2026, 11, 23)
+    entry = ConfigEntry(
+        entry_id="sync_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google_source"],
+            CONF_HORIZON_DAYS: 1,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_AUTO_SYNC_CALENDAR: True,
+            CONF_TARGET_CALENDAR_ENTITY: "calendar.google_mental_load",
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    coord.data = {today.isoformat(): _make_high_load_analysis(today, score=82)}
+
+    # Toggle checklist item
+    done = await coord.async_toggle_checklist_item("task_uid_1:step:0", completed=True)
+    assert done is True
+    assert "task_uid_1:step:0" in coord.completed_item_uids
+
+    # Safety guard: refuse writing to read-only source calendar
+    blocked = await coord.async_sync_to_external_calendar("calendar.google_source")
+    assert blocked == 0
+
+    # Writing to dedicated secondary Google Calendar succeeds & deduplicates
+    synced = await coord.async_sync_to_external_calendar("calendar.google_mental_load")
+    assert synced == 2  # 1 day badge + 1 hidden task
+    create_calls = [c for c in hass.services.calls if c[0] == "calendar" and c[1] == "create_event"]
+    assert len(create_calls) == 2
+    assert create_calls[0][2]["entity_id"] == "calendar.google_mental_load"
+
+    # Second sync does not create duplicates
+    assert await coord.async_sync_to_external_calendar("calendar.google_mental_load") == 0

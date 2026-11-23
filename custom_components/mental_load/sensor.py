@@ -97,6 +97,7 @@ class MentalLoadDaySensor(MentalLoadBaseSensor):
             "top_stressor": day.top_stressor,
             "factor_breakdown": day.factor_breakdown,
             "hidden_tasks": [t.to_dict() for t in day.hidden_tasks],
+            "completed_item_uids": sorted(self.coordinator.completed_item_uids),
             "recommendations": day.recommendations,
             "provider_used": day.provider_used,
             "cached": day.cached,
@@ -137,6 +138,9 @@ class MentalLoadWeekAverageSensor(MentalLoadBaseSensor):
                 }
                 for d in days
             ],
+            "days_detail": {d.date.isoformat(): d.to_dict() for d in days},
+            "completed_item_uids": sorted(self.coordinator.completed_item_uids),
+            "ical_path": f"/api/mental_load/calendar.ics?token={self.coordinator.ical_token}",
             "peak_date": peak.date.isoformat(),
             "peak_score": peak.score,
             "total_hidden_tasks_week": sum(len(d.hidden_tasks) for d in days),
@@ -201,5 +205,6 @@ class MentalLoadHiddenTasksSensor(MentalLoadBaseSensor):
                 md_lines.append(f"  - [ ] {step}")
         return {
             "tasks": [t.to_dict() for t in day.hidden_tasks],
+            "completed_item_uids": sorted(self.coordinator.completed_item_uids),
             "checklist_markdown": "\n".join(md_lines),
         }
