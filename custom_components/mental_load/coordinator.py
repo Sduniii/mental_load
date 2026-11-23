@@ -21,6 +21,8 @@ from .const import (
     CONF_AUTO_SYNC_CALENDAR,
     CONF_BASE_URL,
     CONF_CALENDARS,
+    CONF_CHILDREN_CALENDARS,
+    CONF_CHILDREN_PROFILES,
     CONF_CONTEXT_ENERGY_SENSOR,
     CONF_CONTEXT_TODOS,
     CONF_CONTEXT_WEATHER,
@@ -329,6 +331,8 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             "ha_context": day_ha_context,
             "weights": get_factor_weights(config),
             "profile": config.get(CONF_USER_PROFILE, ""),
+            "children_profiles": config.get(CONF_CHILDREN_PROFILES, ""),
+            "children_calendars": sorted(str(c) for c in (config.get(CONF_CHILDREN_CALENDARS, []) or [])),
             "provider": config.get(CONF_PROVIDER, ""),
             "model": config.get(CONF_MODEL, ""),
             "base_url": config.get(CONF_BASE_URL, ""),
@@ -394,7 +398,14 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         tz: datetime.tzinfo | None,
     ) -> dict[str, list[CalendarEventInput]]:
         """Read events from all configured source calendars without modifying them."""
-        calendars = list(self.merged_config.get(CONF_CALENDARS, []))
+        main_calendars = [str(c) for c in (self.merged_config.get(CONF_CALENDARS, []) or []) if str(c).strip()]
+        child_calendars = [
+            str(c)
+            for c in (self.merged_config.get(CONF_CHILDREN_CALENDARS, []) or [])
+            if str(c).strip() and str(c) not in main_calendars
+        ]
+        calendars = main_calendars + child_calendars
+        child_cal_set = set(child_calendars)
         buckets: dict[str, list[CalendarEventInput]] = {
             (today + datetime.timedelta(days=i)).isoformat(): [] for i in range(horizon)
         }
@@ -422,6 +433,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
 
         for cal_id, cal_payload in response.items():
             raw_events = cal_payload.get("events", []) if isinstance(cal_payload, dict) else []
+            source_label = f"{cal_id} [Stundenplan/Kind]" if str(cal_id) in child_cal_set else str(cal_id)
             for idx, item in enumerate(raw_events):
                 ev_start, all_day = _parse_event_boundary(item.get("start"), tz)
                 ev_end, _ = _parse_event_boundary(item.get("end", item.get("start")), tz)
@@ -435,7 +447,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                     all_day=all_day,
                     description=str(item.get("description") or ""),
                     location=str(item.get("location") or ""),
-                    source_calendar=str(cal_id),
+                    source_calendar=source_label,
                 )
                 # Assign event to each day within horizon that it overlaps
                 ev_start_date = ev_start.date()

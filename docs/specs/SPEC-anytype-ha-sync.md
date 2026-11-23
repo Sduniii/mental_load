@@ -5,7 +5,7 @@
 **Depends on:** —  
 
 ## Objective
-Bereitstellung eines ausfallsicheren 24/7-Sync-Dienstes auf dem Homelab-Server `homelab-server` (verwaltet über Komodo), der alle offenen Tasks aus dem selbstgehosteten Anytype-Space **„Hausbau“** (`space_test_id`, synchronisiert über `any-sync-bundle` / `anytype.example.internal`) in eine native Home-Assistant-To-do-Liste (**`todo.hausbau_anytype`**) spiegelt und abgehakte Tasks zurück nach Anytype überträgt. Dadurch stehen die Anytype-Aufgaben Home Assistant und `mental_load` rund um die Uhr zur Verfügung, unabhängig davon, ob ein Desktop-Client läuft.
+Bereitstellung eines ausfallsicheren 24/7-Sync-Dienstes auf dem Homelab-Server `homelab-server` (verwaltet über Komodo), der alle offenen Tasks aus dem selbstgehosteten Anytype-Space **„Hausbau“** (`<anytype-space-id>`, synchronisiert über `any-sync-bundle` / `anytype.example.internal`) in eine native Home-Assistant-To-do-Liste (**`todo.hausbau_anytype`**) spiegelt und abgehakte Tasks zurück nach Anytype überträgt. Dadurch stehen die Anytype-Aufgaben Home Assistant und `mental_load` rund um die Uhr zur Verfügung, unabhängig davon, ob ein Desktop-Client läuft.
 
 ## Tech Stack
 - **Server / Orchestrierung:** Komodo auf `homelab-server`, Stack `anytype` (`ghcr.io/grishy/any-sync-bundle:minimal`, `mongo:4.4`, `redis`) unter `/opt/anytype`
@@ -47,19 +47,19 @@ def format_ha_description(object_id: str, details: str) -> str:
 
 ## Testing Strategy
 - **Unit Tests (`pytest`):** Diff-Algorithmus (neu, aktualisiert, in Anytype erledigt, in HA abgehakt), Erhalt des `[ANYTYPE-<id>]`-Markers, Konfliktauflösung bei gleichzeitiger Änderung, Fehlerbehandlung bei Offline-Anytype/HA.
-- **Integration Test (Live):** Manueller Lauf auf `homelab-server` gegen Space `space_test_id` und `todo.hausbau_anytype`; Abhaken eines Test-Tasks in HA und Verifikation in Anytype.
+- **Integration Test (Live):** Manueller Lauf auf `homelab-server` gegen Space `<anytype-space-id>` und `todo.hausbau_anytype`; Abhaken eines Test-Tasks in HA und Verifikation in Anytype.
 
 ## Boundaries
 - **Always:** Sync-Marker `[ANYTYPE-<object_id>]` in HA-Descriptions speichern; bei API-Timeouts sauber im nächsten Intervall (Standard: 5 Min.) erneut versuchen; Secrets (`ANYTYPE_MNEMONIC` / API-Key, `HA_TOKEN`) ausschließlich über `.env` / Komodo-Secrets verwalten.
-- **Ask first:** Falls Anytype-Account-Phrase/API-Key für den Headless-Container neu verknüpft werden muss; falls Aufgaben außerhalb von Space `Hausbau` (`space_test_id`, z. B. `Training`) ebenfalls gespiegelt werden sollen.
+- **Ask first:** Falls Anytype-Account-Phrase/API-Key für den Headless-Container neu verknüpft werden muss; falls Aufgaben außerhalb von Space `Hausbau` (`<anytype-space-id>`, z. B. `Training`) ebenfalls gespiegelt werden sollen.
 - **Never:** Keine direkten Schreibzugriffe auf MongoDB/Redis des `any-sync-bundle` (Ende-zu-Ende-verschlüsselte CRDTs würden beschädigt); niemals Secrets in Git oder Logs ausgeben; keine unkontrollierte Löschung von Nutzer-To-dos ohne `[ANYTYPE-...]`-Marker.
 
 ## Success Criteria
-1. Alle offenen Tasks aus Anytype Space `Hausbau` (`space_test_id`) erscheinen innerhalb von max. 5 Minuten in Home Assistant unter `todo.hausbau_anytype` inkl. Beschreibung/Kontext.
+1. Alle offenen Tasks aus Anytype Space `Hausbau` (`<anytype-space-id>`) erscheinen innerhalb von max. 5 Minuten in Home Assistant unter `todo.hausbau_anytype` inkl. Beschreibung/Kontext.
 2. Erledigt der Nutzer einen Eintrag in Anytype oder in Home Assistant (`todo.hausbau_anytype`), wird der Status beim nächsten Sync-Zyklus in das jeweils andere System übernommen.
 3. Ein Neustart von `homelab-server` oder Home Assistant erzeugt keinerlei Duplikate in `todo.hausbau_anytype`.
 
 ## Resolved Decisions
-- **Synchronisierter Space:** Ausschließlich Space **„Hausbau“** (`space_test_id`) über `anytype.example.internal:33010` / `33020` (`networkId: YOUR_ANY_SYNC_NETWORK_ID`).
+- **Synchronisierter Space:** Ausschließlich Space **„Hausbau“** (`<anytype-space-id>`) über `anytype.example.internal:33010` / `33020` (`networkId: <network-id>`).
 - **Auth-Verknüpfung auf `homelab-server`:** Headless-Login über `anytype-cli` (`ANYTYPE_ACCOUNT_KEY` / Recovery-Phrase in Komodo `.env` / Environment) mit benutzerdefinierter `network.yaml` für den Self-Hosted-`any-sync-bundle`-Server (`anytype.example.internal`).
 - **Initial-Befüllung & Laufzeit-Sync:** Während des Deploys wird `todo.hausbau_anytype` (`local_todo`) sofort befüllt und der 24/7-Container auf `homelab-server` über Komodo scharfgeschaltet.

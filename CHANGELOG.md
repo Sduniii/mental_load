@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.8.0] — 2026-11-23
+
+### Added
+- **Dedicated Children & School Timetable Calendars (`children_calendars`):** Select additional read-only calendars (e.g. a child's school timetable). Events are tagged `[Stundenplan/Kind]` so consecutive lessons do not inflate parental pacing stress, while special items (Sport, Schwimmen, Ausflug, Elternabend, Ausfall) generate targeted prep/packing tasks.
+- **Children Profiles & Dynamic Age Calculation (`children_profiles`):** Enter children's names and birthdates (`YYYY-MM-DD` or `DD.MM.YYYY`); the analyzer automatically computes exact age (months under age 2, years from age 2+), developmental stage context, and 14-day birthday reminders for every forecast day.
+
+### Security & Privacy
+- Removed hardcoded personal/homelab domain URLs, Space/Network/Peer IDs, maintainer email, and local filesystem paths from repository templates and documentation.
+
+---
+
 ## [1.7.0] — 2026-11-23
 
 ### Added

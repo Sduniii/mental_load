@@ -27,6 +27,8 @@
         "description": "Configure your personal profile, optional live HA context sensors, and active threshold reactions.",
         "data": {
           "user_profile": "Personal Profile & Stress Rules",
+          "children_profiles": "Children & Birthdays (e.g. Name: YYYY-MM-DD, school/daycare – one per line)",
+          "children_calendars": "Children & School Timetable Calendars (optional, read-only)",
           "context_todos": "Factor 4: Include Open To-Do Lists",
           "context_energy_sensor": "Factor 4: Sleep / Energy Sensor",
           "context_weather": "Factor 4: Weather Entity",
@@ -72,6 +74,8 @@
         "title": "5 Factors & Personal Profile",
         "data": {
           "user_profile": "Personal Profile & Stress Rules",
+          "children_profiles": "Children & Birthdays (e.g. Name: YYYY-MM-DD, school/daycare – one per line)",
+          "children_calendars": "Children & School Timetable Calendars (optional, read-only)",
           "weight_pacing": "Weight Factor 1: Pacing & Context Switching",
           "weight_social": "Weight Factor 2: Social Battery",
           "weight_mobility": "Weight Factor 3: Mobility & Travel",
@@ -91,6 +95,7 @@
         "title": "Calendar & Invisible Tasks",
         "data": {
           "calendars": "Source Calendars",
+          "children_calendars": "Children & School Timetable Calendars (optional, read-only)",
           "horizon_days": "Forecast Horizon (Days)",
           "update_interval": "Update Interval (Minutes)",
           "show_hidden_task_blocks": "Show hidden head-task blocks in calendar.mental_load",

@@ -5,7 +5,7 @@
 
 | Module id | Responsibility | Depends on |
 |---|---|---|
-| `anytype-ha-sync` | Headless 24/7-Synchronisation der offenen Tasks (inkl. Kontext/Unterseiten) aus dem Anytype-Space „Hausbau“ (`space_test_id` via `any-sync-bundle` / `anytype.example.internal`) in Home Assistant (`todo.hausbau_anytype`, bidirektionaler Erledigt-Abgleich). | — |
+| `anytype-ha-sync` | Headless 24/7-Synchronisation der offenen Tasks (inkl. Kontext/Unterseiten) aus dem Anytype-Space „Hausbau“ (`<anytype-space-id>` via `any-sync-bundle` / `anytype.example.internal`) in Home Assistant (`todo.hausbau_anytype`, bidirektionaler Erledigt-Abgleich). | — |
 | `project-baseline-load` | Berechnung einer konfigurierbaren, gedeckelten täglichen Projekt-Grundlast (`project_baseline_load`, Standard: +2 % pro offenem Item, Deckel 15 %) aus `CONF_CONTEXT_TODOS` über den gesamten 30-Tage-Horizont (inkl. `fast_empty_day`), inkl. Sensor-/Karten-Anzeige. | `anytype-ha-sync` |
 | `project-task-breakdown` | KI-/Heuristik-Aufschlüsselung großer Projekt-To-dos in kleine 20–45-Minuten-Etappen (`category="project_step"`, `placement_mode="free_slot"`), automatische Einplanung von 1–2 Etappen auf ruhigen Tagen / Wochenenden (< 35 % Score) sowie bereinigende Synchronisation in `calendar.mental_load_2`. | `project-baseline-load` |
 

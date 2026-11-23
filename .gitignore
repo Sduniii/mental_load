@@ -1,11 +1,5 @@
+.env
+*.local.yaml
+network.local.yaml
 __pycache__/
-*.py[cod]
-*$py.class
 .pytest_cache/
-.coverage
-htmlcov/
-.venv/
-venv/
-*.zip
-.DS_Store
-logs/

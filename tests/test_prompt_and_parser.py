@@ -4,6 +4,8 @@ from __future__ import annotations
 import datetime
 
 from custom_components.mental_load.const import (
+    CONF_CHILDREN_CALENDARS,
+    CONF_CHILDREN_PROFILES,
     CONF_DEFAULT_PREP_MINUTES,
     CONF_USER_PROFILE,
     CONF_WEIGHT_MOBILITY,
@@ -19,6 +21,7 @@ from custom_components.mental_load.prompt_builder import (
     analyze_day_heuristic,
     build_day_user_prompt,
     build_system_prompt,
+    parse_children_profiles,
     parse_llm_day_response,
 )
 
@@ -167,3 +170,60 @@ def test_heuristic_feedback_bias_and_factors() -> None:
         feedback_history=lower_fb,
     )
     assert adjusted.score < base.score
+
+
+def test_children_profiles_age_and_timetable_handling() -> None:
+    ref = datetime.date(2026, 11, 23)
+    parsed = parse_children_profiles(
+        "Kind A: 14.05.2018 (Grundschule)\nBaby B: 2026-06-23, Zuhause",
+        reference_date=ref,
+    )
+    assert len(parsed) == 2
+    assert parsed[0]["name"] == "Kind A"
+    assert parsed[0]["age_years"] == 8
+    assert parsed[0]["age_display"] == "8 Jahre"
+    assert "Grundschule" in parsed[0]["stage_hint"]
+    assert parsed[1]["name"] == "Baby B"
+    assert parsed[1]["age_years"] == 0
+    assert parsed[1]["age_months"] == 5
+    assert parsed[1]["age_display"] == "5 Monate"
+
+    cfg = {
+        CONF_CHILDREN_PROFILES: "Kind A: 14.05.2018 (Grundschule)\nBaby B: 2026-11-30",
+        CONF_CHILDREN_CALENDARS: ["calendar.stundenplan_kind"],
+    }
+    sys_prompt = build_system_prompt(cfg, [])
+    assert "Children & School Timetable Context" in sys_prompt
+    assert "calendar.stundenplan_kind" in sys_prompt
+
+    usr_prompt = build_day_user_prompt(ref, [], {}, cfg)
+    assert "age **8 Jahre**" in usr_prompt
+    assert "Upcoming birthday in 7 days" in usr_prompt
+
+    tz = datetime.timezone(datetime.timedelta(hours=1))
+    school_events = [
+        CalendarEventInput(
+            uid="s1",
+            summary="Mathe",
+            start=datetime.datetime(2026, 11, 23, 8, 0, tzinfo=tz),
+            end=datetime.datetime(2026, 11, 23, 8, 45, tzinfo=tz),
+            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+        ),
+        CalendarEventInput(
+            uid="s2",
+            summary="Sportunterricht",
+            start=datetime.datetime(2026, 11, 23, 8, 45, tzinfo=tz),
+            end=datetime.datetime(2026, 11, 23, 9, 30, tzinfo=tz),
+            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+        ),
+        CalendarEventInput(
+            uid="s3",
+            summary="Deutsch",
+            start=datetime.datetime(2026, 11, 23, 9, 30, tzinfo=tz),
+            end=datetime.datetime(2026, 11, 23, 10, 15, tzinfo=tz),
+            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+        ),
+    ]
+    school_only = analyze_day_heuristic(ref, school_events, {}, cfg)
+    assert school_only.factor_breakdown[FACTOR_PACING] < 15
+    assert any("Schulsachen packen" in t.title and "Sportunterricht" in t.title for t in school_only.hidden_tasks)

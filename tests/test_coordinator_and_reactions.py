@@ -11,6 +11,8 @@ from custom_components.mental_load.const import (
     CONF_AUTO_PUSH_TODO,
     CONF_AUTO_SYNC_CALENDAR,
     CONF_CALENDARS,
+    CONF_CHILDREN_CALENDARS,
+    CONF_CHILDREN_PROFILES,
     CONF_CONTEXT_TODOS,
     CONF_CRITICAL_THRESHOLD,
     CONF_HORIZON_DAYS,
@@ -621,3 +623,44 @@ async def test_project_priority_baseline_and_scheduling_order() -> None:
     assert ordered_parents[0] == "Dachfenster Notabdichtung"
     assert ordered_parents.index("OG: Elektrik Schaltplan") < ordered_parents.index("Zählerkasten Doku")
     assert ordered_parents.index("Zählerkasten Doku") < ordered_parents.index("Garten Schuppen aufräumen")
+
+
+async def test_children_calendar_fetching_and_tagging() -> None:
+    hass = FakeHass()
+    today = datetime.date(2026, 11, 23)
+
+    def _cal_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        entities = payload.get("entity_id") or []
+        resp: dict[str, Any] = {}
+        if "calendar.parent" in entities:
+            resp["calendar.parent"] = {"events": []}
+        if "calendar.stundenplan" in entities:
+            resp["calendar.stundenplan"] = {
+                "events": [
+                    {
+                        "summary": "Schwimmen",
+                        "start": f"{today.isoformat()}T10:00:00+01:00",
+                        "end": f"{today.isoformat()}T11:30:00+01:00",
+                    }
+                ]
+            }
+        return resp
+
+    hass.services.set_response("calendar", "get_events", _cal_handler)
+    entry = ConfigEntry(
+        entry_id="children_cal_entry",
+        data={
+            CONF_CALENDARS: ["calendar.parent"],
+            CONF_CHILDREN_CALENDARS: ["calendar.stundenplan"],
+            CONF_CHILDREN_PROFILES: "Kind: 14.05.2018 (Grundschule)",
+            CONF_HORIZON_DAYS: 2,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    await coord.async_config_entry_first_refresh()
+
+    cal_calls = [c for c in hass.services.calls if c[0] == "calendar" and c[1] == "get_events"]
+    assert "calendar.stundenplan" in cal_calls[0][2]["entity_id"]
+    today_tasks = coord.data[today.isoformat()].hidden_tasks
+    assert any("Schwimmen" in t.title and t.category == "packing" for t in today_tasks)

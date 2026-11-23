@@ -8,7 +8,7 @@
 
 ## Overview
 Erweiterung des Systems in zwei klar getrennten Bausteinen:
-1. **`anytype-ha-sync` (Homelab / Komodo auf `homelab-server`):** Headless-Container neben `/opt/anytype`, der Space **„Hausbau“** (`space_test_id`) 24/7 bidirektional in Home Assistant (`todo.hausbau_anytype` über `local_todo`) spiegelt.
+1. **`anytype-ha-sync` (Homelab / Komodo auf `homelab-server`):** Headless-Container neben `/opt/anytype`, der Space **„Hausbau“** (`<anytype-space-id>`) 24/7 bidirektional in Home Assistant (`todo.hausbau_anytype` über `local_todo`) spiegelt.
 2. **`mental_load` v1.6.0 (Home Assistant Integration & Card):**
    - Konfigurierbare, gedeckelte tägliche Projekt-Grundlast (`+2%` pro offenem Item in `CONF_CONTEXT_TODOS`, Deckel `15%`) auf alle 30 Tage inkl. `fast_empty_day` und Anzeige in Sensoren + Karte.
    - Gecachte KI-/Heuristik-Aufschlüsselung großer Projekt-To-dos in 20–45-Min.-Etappen (`project_step`, `placement_mode="free_slot"`) mit bis zu **2 Etappen/Tag am Wochenende** und **strikter Sonntags-Regel** (keine Läden, kein TÜV, keine Telefonate, kein Lärm am Sonntag – nur ruhige Planung/Indoor).

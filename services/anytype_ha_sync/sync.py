@@ -1,4 +1,4 @@
-"""Bidirectional 24/7 sync worker: Anytype Space ('Hausbau') <-> Home Assistant local_todo."""
+"""Bidirectional 24/7 sync worker: Anytype Space <-> Home Assistant local_todo."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -444,7 +444,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     anytype_url = os.environ.get("ANYTYPE_API_URL", "http://127.0.0.1:31012")
     anytype_api_key = os.environ["ANYTYPE_API_KEY"]
-    space_id = os.environ.get("ANYTYPE_SPACE_ID", "space_test_id")
+    space_id = os.environ["ANYTYPE_SPACE_ID"]
     ha_url = os.environ["HA_URL"]
     ha_token = os.environ["HA_TOKEN"]
     ha_todo_entity = os.environ.get("HA_TODO_ENTITY", "todo.hausbau_anytype")

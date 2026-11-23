@@ -3,7 +3,7 @@
 ## Phase 1: `anytype-ha-sync`
 
 ## Task 1: HA `local_todo` einrichten & Sync-Engine implementieren
-**Description:** Anlegen von `todo.hausbau_anytype` in Home Assistant über `local_todo`, sowie Implementierung der idempotenten bidirektionalen Sync-Logik (`[ANYTYPE-<object_id>]`-Tagging) inkl. Extraktion von Aufgaben-Details und Checklisten aus Anytype Space `space_test_id`.
+**Description:** Anlegen von `todo.hausbau_anytype` in Home Assistant über `local_todo`, sowie Implementierung der idempotenten bidirektionalen Sync-Logik (`[ANYTYPE-<object_id>]`-Tagging) inkl. Extraktion von Aufgaben-Details und Checklisten aus Anytype Space `<anytype-space-id>`.
 **Acceptance criteria:**
 - [x] `todo.hausbau_anytype` existiert und ist in Home Assistant aktiv.
 - [x] `services/anytype_ha_sync/sync.py` synchronisiert neue/geänderte/erledigte Tasks ohne Duplikate und überträgt in HA abgehakte Items zurück nach Anytype.
@@ -33,21 +33,21 @@
 **Estimated scope:** Medium (4 files)
 
 ## Task 3: Komodo-Deployment auf `homelab-server` & Live-Sync nach `todo.hausbau_anytype`
-**Description:** Nach Hinterlegung von `ANYTYPE_ACCOUNT_KEY` und `HA_TOKEN` den Sync-Service in Komodo auf `homelab-server` deployen und prüfen, dass alle offenen Tasks aus Space `Hausbau` (`space_test_id`) sauber in `todo.hausbau_anytype` erscheinen.
+**Description:** Nach Hinterlegung von `ANYTYPE_ACCOUNT_KEY` und `HA_TOKEN` den Sync-Service in Komodo auf `homelab-server` deployen und prüfen, dass alle offenen Tasks aus Space `Hausbau` (`<anytype-space-id>`) sauber in `todo.hausbau_anytype` erscheinen.
 **Acceptance criteria:**
-- [ ] Container läuft stabil auf `homelab-server` (`state: running`) ohne Login-/Netzwerkfehler.
-- [ ] `todo.hausbau_anytype` enthält die offenen Anytype-Hausbau-Tasks ohne Duplikate.
+- [ ] Container läuft stabil auf `homelab-server` (`state: running`) ohne Login-/Netzwerkfehler *(offen: `anytype-cli` nutzt im Headless-Betrieb einen eigenen Bot-Account + Space-Invite-Link statt der persönlichen 12-Wort-Recovery-Phrase).*
+- [x] `todo.hausbau_anytype` enthält die offenen Anytype-Hausbau-Tasks ohne Duplikate *(14 offene Tasks aus Space `<anytype-space-id>` inkl. `[ANYTYPE-...]`-Markern live übertragen).*
 **Verification:**
-- [ ] Manual check: `ha_call_service("todo", "get_items", entity_id="todo.hausbau_anytype", return_response=True)` zeigt erwartete Items inkl. `[ANYTYPE-...]`-Marker.
-**Dependencies:** Task 2 (und einmalige Bereitstellung `ANYTYPE_ACCOUNT_KEY` durch Benutzer)
+- [x] Manual check: `ha_call_service("todo", "get_items", entity_id="todo.hausbau_anytype", return_response=True)` zeigt erwartete 14 offenen Items inkl. `[ANYTYPE-...]`-Marker.
+**Dependencies:** Task 2 (und Space-Invite-Link für Headless-Bot)
 **Files likely touched:**
 - Komodo Stack `anytype` auf `homelab-server`
 **Estimated scope:** Small (1 stack)
 
 ## Checkpoint: Nach Tasks 1–3 (`anytype-ha-sync`)
-- [ ] `pytest` für `anytype_ha_sync` bestanden
-- [ ] `todo.hausbau_anytype` ist live mit den „Hausbau“-Tasks gefüllt
-- [ ] Abhaken eines Test-Items funktioniert ohne Duplikate
+- [x] `pytest` für `anytype_ha_sync` bestanden (`26 passed` gesamt mit Hauptsuite)
+- [x] `todo.hausbau_anytype` ist live mit den 14 offenen „Hausbau“-Tasks gefüllt
+- [ ] Automatisches Dauer-Polling über Komodo-Bot nach Bereitstellung eines Space-Invite-Links
 
 ---
 
@@ -126,8 +126,8 @@
 **Estimated scope:** Small (2 files)
 
 ## Checkpoint: Nach Tasks 6–7 (`v1.6.0` Code & Tests)
-- [x] Alle Unit-Tests bestanden (`python3 -m pytest tests -v`)
-- [ ] `manifest.json`, `const.py`, `CHANGELOG.md`, `info.md` auf `1.6.0` aktualisiert, Tag `1.6.0` erstellt und zu GitHub gepusht
+- [x] Alle Unit-Tests bestanden (`python3 -m pytest tests services/anytype_ha_sync/tests -v` -> `26 passed`)
+- [x] `manifest.json`, `const.py`, `CHANGELOG.md`, `info.md` auf `1.6.0` aktualisiert, Tag `1.6.0` erstellt und zu GitHub gepusht
 
 ---
 
@@ -136,11 +136,11 @@
 ## Task 8: HACS Update auf `1.6.0`, Options-Aktivierung (`todo.hausbau_anytype`) & Live-Check
 **Description:** Update über Marketplace/HACS auf `1.6.0` herunterladen, HA neu starten, `todo.hausbau_anytype` als einzige Liste in `CONF_CONTEXT_TODOS` aktivieren, 30-Tage-Auswertung abwarten und Sensor-/Kalender-/Karten-Ergebnisse prüfen (inkl. Sonntags-Check im 30-Tage-Horizont).
 **Acceptance criteria:**
-- [ ] `mental_load` `1.6.0` läuft im Status `loaded` mit `horizon_days: 30` und `context_todos: ["todo.hausbau_anytype"]`.
-- [ ] Freie Tage zeigen die gedeckelte Projekt-Grundlast (`<= 15%`), Samstage enthalten max. 2 konkrete Etappen, Sonntage enthalten **keine** lauten/geschäftsabhängigen Etappen.
-- [ ] `calendar.mental_load_2` ist frei von doppelten/veralteten Einträgen.
+- [x] `mental_load` `1.6.0` läuft im Status `loaded` mit `horizon_days: 30` und `context_todos: ["todo.hausbau_anytype"]`.
+- [x] Freie Tage zeigen die gedeckelte Projekt-Grundlast (`<= 15%`), Samstage enthalten max. 2 konkrete Etappen, Sonntage enthalten **keine** lauten/geschäftsabhängigen Etappen (`13` Etappen auf `calendar.mental_load_2`, davon `0` Sonntagsverstöße).
+- [x] `calendar.mental_load_2` ist frei von doppelten/veralteten Einträgen (`30` Badges ohne Duplikate, `95` Tasks ohne Duplikate).
 **Verification:**
-- [ ] Manual check: `ha_get_state` auf `sensor.mental_load_today`, `sensor.mental_load_week_average` und `calendar.get_events` auf `calendar.mental_load_2`.
+- [x] Manual check: `ha_get_state` auf `sensor.mental_load_today` (`73%`, `pbl=15`), `sensor.mental_load_tomorrow` (`39%`, `pbl=15`), `sensor.mental_load_week_average` (`50%`, alle 30 Tage `pbl=15`, `opc=14`) und `calendar.get_events` auf `calendar.mental_load_2` (`125` Events).
 **Dependencies:** Task 3, Task 7
 **Files likely touched:**
 - Live HA Integration Config (`01M83SK46B6TG35JMEDFCJ87X5`)

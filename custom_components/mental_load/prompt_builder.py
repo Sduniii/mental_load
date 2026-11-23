@@ -9,6 +9,8 @@ from typing import Any
 
 from .const import (
     ALL_FACTORS,
+    CONF_CHILDREN_CALENDARS,
+    CONF_CHILDREN_PROFILES,
     CONF_DEFAULT_FOLLOWUP_MINUTES,
     CONF_DEFAULT_PREP_MINUTES,
     CONF_DEFAULT_TRAVEL_MINUTES,
@@ -21,6 +23,7 @@ from .const import (
     CONF_WEIGHT_MOBILITY,
     CONF_WEIGHT_PACING,
     CONF_WEIGHT_SOCIAL,
+    DEFAULT_CHILDREN_PROFILES,
     DEFAULT_FOLLOWUP_MINUTES,
     DEFAULT_LANGUAGE,
     DEFAULT_PREP_MINUTES,
@@ -322,6 +325,155 @@ def _build_event_gaps(events: list[CalendarEventInput]) -> list[str]:
     return notes
 
 
+def _parse_birthdate_token(raw_line: str) -> tuple[datetime.date | None, str]:
+    """Extract YYYY-MM-DD or DD.MM.YYYY birthdate and return (date, remaining_text)."""
+    iso_match = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", raw_line)
+    if iso_match:
+        try:
+            dob = datetime.date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
+            cleaned = (raw_line[: iso_match.start()] + " " + raw_line[iso_match.end() :]).strip()
+            return dob, cleaned
+        except ValueError:
+            pass
+    de_match = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", raw_line)
+    if de_match:
+        try:
+            dob = datetime.date(int(de_match.group(3)), int(de_match.group(2)), int(de_match.group(1)))
+            cleaned = (raw_line[: de_match.start()] + " " + de_match.group(0)[0:0] + raw_line[de_match.end() :]).strip()
+            return dob, cleaned
+        except ValueError:
+            pass
+    return None, raw_line.strip()
+
+
+def parse_children_profiles(
+    raw_text: str,
+    reference_date: datetime.date | None = None,
+) -> list[dict[str, Any]]:
+    """Parse child entries with birthdates and compute exact age & developmental stage as of reference_date."""
+    if not raw_text or not str(raw_text).strip():
+        return []
+    ref = reference_date or datetime.date.today()
+    children: list[dict[str, Any]] = []
+
+    for chunk in re.split(r"[\n;]+", str(raw_text)):
+        line = chunk.strip()
+        if not line:
+            continue
+        dob, remainder = _parse_birthdate_token(line)
+        note = ""
+        paren_match = re.search(r"\(([^)]+)\)", remainder)
+        if paren_match:
+            note = paren_match.group(1).strip()
+            remainder = (remainder[: paren_match.start()] + " " + remainder[paren_match.end() :]).strip()
+        parts = [p.strip(" :-–|,") for p in re.split(r"[:,|]+", remainder, maxsplit=1) if p.strip(" :-–|,")]
+        name = parts[0] if parts else line
+        if len(parts) > 1 and not note:
+            note = parts[1].strip(" :-–|,")
+        elif len(parts) > 1:
+            note = f"{parts[1]}, {note}".strip(", ")
+
+        if dob is None:
+            children.append(
+                {
+                    "name": name,
+                    "birthdate": None,
+                    "age_years": None,
+                    "age_months": None,
+                    "age_display": "Alter unbekannt",
+                    "stage_hint": "Betreuung/Alter nach Kontext einschätzen",
+                    "days_until_birthday": None,
+                    "note": note,
+                }
+            )
+            continue
+
+        if ref < dob:
+            total_months = 0
+            years = 0
+            age_display = "noch nicht geboren"
+        else:
+            total_months = (ref.year - dob.year) * 12 + (ref.month - dob.month) - (1 if ref.day < dob.day else 0)
+            total_months = max(0, total_months)
+            years = total_months // 12
+            if years < 2:
+                age_display = f"{total_months} Monat" if total_months == 1 else f"{total_months} Monate"
+            else:
+                age_display = f"{years} Jahre"
+
+        if years < 1:
+            stage_hint = "Säugling/Baby (sehr hoher Betreuungs- & Schlafbedarf)"
+        elif years < 3:
+            stage_hint = "Kleinkind (volle Begleitung & Wickel-/Schlafzeiten)"
+        elif years < 6:
+            stage_hint = "Kita-Alter (Bring-/Abholzeiten, Wechselkleidung)"
+        elif years < 11:
+            stage_hint = "Grundschule (Stundenplan, Sport-/Schwimmbeutel, Hausaufgaben, Bring-/Abhollogistik)"
+        elif years < 15:
+            stage_hint = "Weiterführende Schule (zunehmend selbstständig, Klassenarbeiten/Termine)"
+        else:
+            stage_hint = "Jugendliche/r (weitgehend selbstständig, v. a. besondere Termine beachten)"
+
+        bday_day = 28 if (dob.month == 2 and dob.day == 29) else dob.day
+        next_bday = datetime.date(ref.year, dob.month, bday_day)
+        if next_bday < ref:
+            next_bday = datetime.date(ref.year + 1, dob.month, bday_day)
+        days_until = (next_bday - ref).days
+
+        children.append(
+            {
+                "name": name,
+                "birthdate": dob.isoformat(),
+                "age_years": years,
+                "age_months": total_months,
+                "age_display": age_display,
+                "stage_hint": stage_hint,
+                "days_until_birthday": days_until,
+                "note": note,
+            }
+        )
+    return children
+
+
+def format_children_context_block(
+    config: dict[str, Any],
+    target_date: datetime.date | None = None,
+) -> str:
+    """Format configured children profiles + child/school calendar rules for LLM prompts."""
+    ref = target_date or datetime.date.today()
+    children = parse_children_profiles(str(config.get(CONF_CHILDREN_PROFILES, DEFAULT_CHILDREN_PROFILES) or ""), ref)
+    child_cals = [str(c).strip() for c in (config.get(CONF_CHILDREN_CALENDARS, []) or []) if str(c).strip()]
+    if not children and not child_cals:
+        return ""
+
+    lines: list[str] = ["### Children & School Timetable Context"]
+    for child in children:
+        note_str = f" | Note: {child['note']}" if child.get("note") else ""
+        bday_note = ""
+        days_until = child.get("days_until_birthday")
+        if days_until == 0:
+            bday_note = " | 🎂 BIRTHDAY TODAY!"
+        elif isinstance(days_until, int) and 1 <= days_until <= 14:
+            bday_note = f" | 🎂 Upcoming birthday in {days_until} days (plan gift/party prep ahead)"
+        lines.append(
+            f"- Child `{child['name']}`: age **{child['age_display']}** (born {child.get('birthdate') or 'unknown'}) — "
+            f"{child['stage_hint']}{note_str}{bday_note}"
+        )
+
+    if child_cals:
+        lines.append(
+            "- Dedicated child/school timetable calendars "
+            f"({', '.join(child_cals)}) are tagged `[Stundenplan/Kind]`."
+        )
+        lines.append(
+            "  IMPORTANT TIMETABLE RULE: Consecutive school lessons (e.g. Mathe, Deutsch, Kunst) belong to the child's timetable, "
+            "NOT the parent's own meetings — do NOT score individual school lessons as parent back-to-back context switching! "
+            "Instead derive ONLY the real parent load: morning drop-off / afternoon pick-up logistics (depending on child's age), "
+            "special schedule changes (Ausfall, früher Schluss, Elternabend), and evening-before packing/prep (e.g. Sport -> Sportbeutel, Schwimmen -> Schwimmsachen, Ausflug -> Rucksack/Proviant)."
+        )
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     config: dict[str, Any],
     feedback_history: list[FeedbackEntry],
@@ -329,6 +481,7 @@ def build_system_prompt(
     """Build the system instruction prompt covering all 5 factors and hidden-task extraction."""
     language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
     profile = str(config.get(CONF_USER_PROFILE, DEFAULT_USER_PROFILE)).strip()
+    children_block = format_children_context_block(config)
     weights = get_factor_weights(config)
 
     lang_instruction = (
@@ -345,6 +498,8 @@ def build_system_prompt(
         )
     feedback_block = "\n".join(feedback_lines) if feedback_lines else "- No user calibration feedback yet."
 
+    children_section = f"\n{children_block}\n" if children_block else ""
+
     return f"""You are an empathetic Cognitive Load & Invisible Mental Work Analyst for Home Assistant.
 Your job is to evaluate the user's daily calendar and Home Assistant context across 5 factors, calculate an honest mental load score (0-100), and EXPLICITLY UNCOVER the invisible head-tasks ("unsichtbare Kopfarbeit") attached to each calendar event so they can be made visible on the user's calendar and todo list.
 
@@ -352,6 +507,7 @@ Your job is to evaluate the user's daily calendar and Home Assistant context acr
 
 ### User Personality & Lifestyle Profile
 {profile}
+{children_section}
 
 ### The 5 Mental Load Factors & User Weights
 1. `pacing_context` (weight {weights[FACTOR_PACING]:.2f}x): Back-to-back events (<15m gap), overlaps, lack of recovery buffers, and context switches between domains (work, family, medical, errands).
@@ -429,6 +585,8 @@ def build_day_user_prompt(
     )
     energy = ha_context.get("energy_sensor") or "Not configured"
     weather = ha_context.get("weather") or "Not configured"
+    children_block = format_children_context_block(config, target_date)
+    children_extra = f"\n{children_block}\n" if children_block else ""
 
     return f"""Analyze mental load for date: {target_date.isoformat()} ({weekday}).
 
@@ -437,7 +595,7 @@ def build_day_user_prompt(
 
 ### Detected Pacing & Transition Gaps
 {gaps_text}
-
+{children_extra}
 ### Live Home Assistant Context (Factor 4)
 - Open To-Do items: {todo_summary}
 - Sleep / Energy / Recovery sensor: {energy}
@@ -697,32 +855,37 @@ def analyze_day_heuristic(
     followup_min = int(config.get(CONF_DEFAULT_FOLLOWUP_MINUTES, DEFAULT_FOLLOWUP_MINUTES))
 
     sorted_events = sorted(events, key=lambda e: e.start)
-    timed_events = [e for e in sorted_events if not e.all_day]
+    child_events = [
+        e for e in sorted_events
+        if "[stundenplan/kind]" in e.source_calendar.lower() or e.source_calendar.lower().startswith("child:")
+    ]
+    parent_events = [e for e in sorted_events if e not in child_events]
+    timed_parent_events = [e for e in parent_events if not e.all_day]
 
-    # Factor 1: Pacing & Context Switching
+    # Factor 1: Pacing & Context Switching (only count parent events, not consecutive school lessons)
     back_to_back = 0
     overlaps = 0
-    domains = [_classify_event_domain(e.summary) for e in sorted_events]
+    domains = [_classify_event_domain(e.summary) for e in parent_events]
     domain_switches = sum(1 for a, b in zip(domains, domains[1:]) if a != b)
-    for prev_ev, curr_ev in zip(timed_events, timed_events[1:]):
+    for prev_ev, curr_ev in zip(timed_parent_events, timed_parent_events[1:]):
         gap = (curr_ev.start - prev_ev.end).total_seconds() / 60.0
         if gap < 0:
             overlaps += 1
         elif gap < 15:
             back_to_back += 1
-    pacing_score = min(100, len(sorted_events) * 11 + back_to_back * 16 + overlaps * 22 + domain_switches * 10)
+    pacing_score = min(100, len(parent_events) * 11 + back_to_back * 16 + overlaps * 22 + domain_switches * 10 + (4 if child_events else 0))
 
     # Factor 2: Social Battery & Profile
-    evening_events = sum(1 for e in timed_events if e.start.hour >= 18)
+    evening_events = sum(1 for e in timed_parent_events if e.start.hour >= 18)
     social_events = sum(
-        1 for e in sorted_events
+        1 for e in parent_events
         if any(k in e.summary.lower() for k in ("meeting", "party", "geburtstag", "dinner", "abend", "team", "eltern", "call"))
     )
     recovery_events = sum(1 for d in domains if d == "recovery")
     social_score = max(0, min(100, social_events * 18 + evening_events * 20 - recovery_events * 15))
 
     # Factor 3: Mobility & Locations
-    located_events = [e for e in sorted_events if e.location.strip()]
+    located_events = [e for e in parent_events if e.location.strip()]
     mobility_score = min(100, len(located_events) * 28)
 
     # Factor 4: Live HA Context (todos, energy/sleep, weather)
@@ -743,8 +906,50 @@ def analyze_day_heuristic(
     hidden_tasks: list[HiddenTask] = []
     for ev in sorted_events:
         text = f"{ev.summary} {ev.description}".lower()
+        is_child_cal = "[stundenplan/kind]" in ev.source_calendar.lower() or ev.source_calendar.lower().startswith("child:")
         ev_start = ev.start if not ev.all_day else datetime.datetime.combine(target_date, datetime.time(8, 30), tzinfo=tzinfo)
         ev_end = ev.end if not ev.all_day else datetime.datetime.combine(target_date, datetime.time(9, 0), tzinfo=tzinfo)
+
+        if is_child_cal:
+            needs_bag = any(k in text for k in ("sport", "schwimm", "turnen", "ausflug", "wandertag", "verkleid", "fasching"))
+            is_special_child = any(k in text for k in ("eltern", "schulfest", "ferien", "ausfall", "entfall", "früh", "klassenarbeit"))
+            if needs_bag:
+                bag_title = f"🎒 Schulsachen packen: {ev.summary}" if is_de else f"🎒 Pack school bag: {ev.summary}"
+                hidden_tasks.append(
+                    HiddenTask(
+                        uid=_make_task_uid(target_date, ev.summary, bag_title, "packing"),
+                        parent_event_summary=ev.summary,
+                        title=bag_title,
+                        category="packing",
+                        start=datetime.datetime.combine(target_date, datetime.time(7, 15), tzinfo=tzinfo),
+                        end=datetime.datetime.combine(target_date, datetime.time(7, 30), tzinfo=tzinfo),
+                        load_contribution=10,
+                        checklist=(
+                            ["Sport-/Schwimmsachen bzw. Proviant am Vorabend bereitlegen", "Trinkflasche & Brotdose einpacken"]
+                            if is_de
+                            else ["Prepare sports/swim bag or lunchbox evening before", "Pack water bottle"]
+                        ),
+                    )
+                )
+            elif is_special_child:
+                prep_title = f"🧠 Kinder-Orga: {ev.summary}" if is_de else f"🧠 Child logistics: {ev.summary}"
+                hidden_tasks.append(
+                    HiddenTask(
+                        uid=_make_task_uid(target_date, ev.summary, prep_title, "prep"),
+                        parent_event_summary=ev.summary,
+                        title=prep_title,
+                        category="prep",
+                        start=ev_start - datetime.timedelta(minutes=prep_min),
+                        end=ev_start,
+                        load_contribution=12,
+                        checklist=(
+                            ["Betreuungs-/Abholzeit anpassen", "Unterlagen oder Mitteilungen prüfen"]
+                            if is_de
+                            else ["Adjust pickup/care schedule", "Check school notes"]
+                        ),
+                    )
+                )
+            continue
 
         if ev.location.strip():
             t_start = ev_start - datetime.timedelta(minutes=travel_min)

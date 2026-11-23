@@ -16,6 +16,8 @@ from .const import (
     CONF_AUTO_SYNC_CALENDAR,
     CONF_BASE_URL,
     CONF_CALENDARS,
+    CONF_CHILDREN_CALENDARS,
+    CONF_CHILDREN_PROFILES,
     CONF_CONTEXT_ENERGY_SENSOR,
     CONF_CONTEXT_TODOS,
     CONF_CONTEXT_WEATHER,
@@ -49,6 +51,7 @@ from .const import (
     CONF_WEIGHT_PACING,
     CONF_WEIGHT_SOCIAL,
     DEFAULT_BASE_URLS,
+    DEFAULT_CHILDREN_PROFILES,
     DEFAULT_CRITICAL_THRESHOLD,
     DEFAULT_FOLLOWUP_MINUTES,
     DEFAULT_HORIZON_DAYS,
@@ -183,6 +186,12 @@ class MentalLoadConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_USER_PROFILE, default=DEFAULT_USER_PROFILE): selector.TextSelector(
                     selector.TextSelectorConfig(multiline=True)
                 ),
+                vol.Optional(CONF_CHILDREN_PROFILES, default=DEFAULT_CHILDREN_PROFILES): selector.TextSelector(
+                    selector.TextSelectorConfig(multiline=True)
+                ),
+                vol.Optional(CONF_CHILDREN_CALENDARS, default=[]): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="calendar", multiple=True)
+                ),
                 vol.Optional(CONF_CONTEXT_TODOS, default=[]): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="todo", multiple=True)
                 ),
@@ -289,6 +298,12 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
             vol.Optional(CONF_USER_PROFILE, default=self._cur(CONF_USER_PROFILE, DEFAULT_USER_PROFILE)): selector.TextSelector(
                 selector.TextSelectorConfig(multiline=True)
             ),
+            vol.Optional(CONF_CHILDREN_PROFILES, default=self._cur(CONF_CHILDREN_PROFILES, DEFAULT_CHILDREN_PROFILES)): selector.TextSelector(
+                selector.TextSelectorConfig(multiline=True)
+            ),
+            vol.Optional(CONF_CHILDREN_CALENDARS, default=self._cur(CONF_CHILDREN_CALENDARS, [])): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="calendar", multiple=True)
+            ),
             vol.Optional(CONF_WEIGHT_PACING, default=self._cur(CONF_WEIGHT_PACING, 1.0)): WEIGHT_SELECTOR,
             vol.Optional(CONF_WEIGHT_SOCIAL, default=self._cur(CONF_WEIGHT_SOCIAL, 1.0)): WEIGHT_SELECTOR,
             vol.Optional(CONF_WEIGHT_MOBILITY, default=self._cur(CONF_WEIGHT_MOBILITY, 1.0)): WEIGHT_SELECTOR,
@@ -350,6 +365,9 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
 
         schema_dict: dict[Any, Any] = {
             vol.Required(CONF_CALENDARS, default=self._cur(CONF_CALENDARS, [])): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="calendar", multiple=True)
+            ),
+            vol.Optional(CONF_CHILDREN_CALENDARS, default=self._cur(CONF_CHILDREN_CALENDARS, [])): selector.EntitySelector(
                 selector.EntitySelectorConfig(domain="calendar", multiple=True)
             ),
             vol.Optional(CONF_HORIZON_DAYS, default=self._cur(CONF_HORIZON_DAYS, DEFAULT_HORIZON_DAYS)): selector.NumberSelector(

@@ -27,6 +27,8 @@
         "description": "Definiere dein persönliches Belastungsprofil, optionale Live-Kontext-Sensoren und automatische Reaktionen.",
         "data": {
           "user_profile": "Persönliches Profil & Stress-Regeln",
+          "children_profiles": "Kinder & Geburtstage (z. B. Name: TT.MM.JJJJ, Schule/Kita – je Zeile)",
+          "children_calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
           "context_todos": "Faktor 4: Offene To-Do-Listen einbeziehen",
           "context_energy_sensor": "Faktor 4: Schlaf- / Energie-Sensor",
           "context_weather": "Faktor 4: Wetter-Entität",
@@ -72,6 +74,8 @@
         "title": "5 Faktoren & Persönliches Profil",
         "data": {
           "user_profile": "Persönliches Profil & Stress-Regeln",
+          "children_profiles": "Kinder & Geburtstage (z. B. Name: TT.MM.JJJJ, Schule/Kita – je Zeile)",
+          "children_calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
           "weight_pacing": "Gewichtung Faktor 1: Taktung & Kontextwechsel",
           "weight_social": "Gewichtung Faktor 2: Soziale Batterie",
           "weight_mobility": "Gewichtung Faktor 3: Ortswechsel & Mobilität",
@@ -91,6 +95,7 @@
         "title": "Kalender & Unsichtbare Aufgaben",
         "data": {
           "calendars": "Quell-Kalender",
+          "children_calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
           "horizon_days": "Vorschau-Horizont (Tage)",
           "update_interval": "Aktualisierungsintervall (Minuten)",
           "show_hidden_task_blocks": "Kopf-Aufgaben als Blöcke in calendar.mental_load anzeigen",

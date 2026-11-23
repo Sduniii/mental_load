@@ -2,6 +2,11 @@
 
 Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Modell deiner Wahl, berechne den täglichen **Mental Load (0–100%)**, mache **unsichtbare Kopf-Aufgaben** direkt in `calendar.mental_load` sichtbar und löse aktive Smart-Home-Reaktionen aus.
 
+## Neu in v1.8.0
+
+- 🎒 **Kinder- & Stundenplan-Kalender:** Zusätzliche Kalender (z. B. Schul-Stundenplan) rein lesend anbinden — Schulstunden erzeugen keinen eigenen Terminstress, aber Sport-/Schwimm-/Ausflugs-Checklisten und Logistik werden automatisch berücksichtigt.
+- 🎂 **Kinder-Profile mit Geburtstag:** Alter (inkl. Monate bei Babys/Kleinkindern), Betreuungsstufe und nahende Geburtstage werden für die KI automatisch tagesaktuell berechnet.
+
 ## Neu in v1.7.0
 
 - 🚦 **Prioritäten aus Anytype (`Priorität`, `In Progress`, Fälligkeit):** `Hoch` (+3%), `Mittel`/`Normal` (+2%) und `Niedrig` (+1%) gewichten die gedeckelte Projekt-Grundlast (max. `15%`) und steuern die Reihenfolge der Etappenplanung — wichtige und aktive Projekte landen automatisch in den ersten freien Slots (unter Beibehaltung der Sonntagsregel).
