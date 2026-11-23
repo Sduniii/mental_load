@@ -107,7 +107,7 @@ class MentalLoadConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.EntitySelectorConfig(domain="calendar", multiple=True)
                 ),
                 vol.Optional(CONF_HORIZON_DAYS, default=DEFAULT_HORIZON_DAYS): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=1, max=14, step=1, mode=selector.NumberSelectorMode.BOX)
+                    selector.NumberSelectorConfig(min=1, max=30, step=1, mode=selector.NumberSelectorMode.BOX)
                 ),
                 vol.Optional(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=10, max=360, step=5, mode=selector.NumberSelectorMode.BOX)
@@ -315,7 +315,7 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
                 selector.EntitySelectorConfig(domain="calendar", multiple=True)
             ),
             vol.Optional(CONF_HORIZON_DAYS, default=self._cur(CONF_HORIZON_DAYS, DEFAULT_HORIZON_DAYS)): selector.NumberSelector(
-                selector.NumberSelectorConfig(min=1, max=14, step=1, mode=selector.NumberSelectorMode.BOX)
+                selector.NumberSelectorConfig(min=1, max=30, step=1, mode=selector.NumberSelectorMode.BOX)
             ),
             vol.Optional(CONF_UPDATE_INTERVAL, default=self._cur(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)): selector.NumberSelector(
                 selector.NumberSelectorConfig(min=10, max=360, step=5, mode=selector.NumberSelectorMode.BOX)

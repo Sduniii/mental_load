@@ -262,7 +262,22 @@ async def test_multiday_load_balancing_and_dynamic_completion_relief() -> None:
             ],
         )
 
-    hass.services.set_response("calendar", "get_events", {"calendar.google": {"events": []}})
+    hass.services.set_response(
+        "calendar",
+        "get_events",
+        {
+            "calendar.google": {
+                "events": [
+                    {
+                        "uid": "osteo_1",
+                        "summary": "Osteopathie",
+                        "start": f"{wednesday.isoformat()}T10:00:00+01:00",
+                        "end": f"{wednesday.isoformat()}T11:00:00+01:00",
+                    }
+                ]
+            }
+        },
+    )
     mock_llm = AsyncMock()
     mock_llm.async_analyze_day = AsyncMock(side_effect=_day_analysis)
 
@@ -290,3 +305,83 @@ async def test_multiday_load_balancing_and_dynamic_completion_relief() -> None:
     assert coord.data[tuesday.isoformat()].score < tue_before
     assert coord.data[wednesday.isoformat()].score < wed_before
     assert coord.data[wednesday.isoformat()].relief_points > 0
+
+
+async def test_30_day_horizon_major_event_7_to_14_day_lead_and_empty_fast_path() -> None:
+    hass = FakeHass()
+    today = datetime.date(2026, 11, 23)
+    major_day = today + datetime.timedelta(days=12)  # 2026-12-05
+    tz = datetime.timezone(datetime.timedelta(hours=1))
+
+    # Only major_day has a calendar event; days 2..29 except major_day are empty
+    hass.services.set_response(
+        "calendar",
+        "get_events",
+        {
+            "calendar.google": {
+                "events": [
+                    {
+                        "uid": "bday1",
+                        "summary": "Kindergeburtstag Emil",
+                        "start": f"{major_day.isoformat()}T15:00:00+01:00",
+                        "end": f"{major_day.isoformat()}T18:00:00+01:00",
+                        "location": "Indoor-Spielplatz",
+                    }
+                ]
+            }
+        },
+    )
+    entry = ConfigEntry(
+        entry_id="horizon_30_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google"],
+            CONF_HORIZON_DAYS: 30,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+        },
+    )
+
+    mock_llm = AsyncMock()
+    mock_llm.async_analyze_day = AsyncMock(
+        side_effect=lambda target_date, events, **kw: DayLoadAnalysis(
+            date=target_date,
+            score=75 if events else 10,
+            level="high" if events else "low",
+            badge_summary="🟠 75%" if events else "🟢 10%",
+            reasoning="Geburtstag" if events else "Frei",
+            factor_breakdown={"pacing_context": 50, "social_battery": 80, "mobility": 60, "ha_context": 20, "hidden_work": 80} if events else {"pacing_context": 0, "social_battery": 0, "mobility": 0, "ha_context": 10, "hidden_work": 0},
+            base_score=75 if events else 10,
+            hidden_tasks=[
+                HiddenTask(
+                    uid="gift_1",
+                    parent_event_summary="Kindergeburtstag Emil",
+                    title="🎒 Mitbringsel & Geschenk: Kindergeburtstag Emil",
+                    category="packing",
+                    start=datetime.datetime.combine(major_day, datetime.time(14, 30), tzinfo=tz),
+                    end=datetime.datetime.combine(major_day, datetime.time(14, 50), tzinfo=tz),
+                    load_contribution=20,
+                    checklist=["Geschenk bestellen", "Karte schreiben"],
+                    parent_event_date=major_day.isoformat(),
+                    scheduled_date=major_day.isoformat(),
+                    lead_days=12,
+                    placement_mode="load_balanced",
+                )
+            ] if events else [],
+        )
+    )
+
+    coord = MentalLoadCoordinator(hass, entry, llm_client=mock_llm)
+    await coord.async_config_entry_first_refresh()
+
+    # 30 days generated, yet LLM called only for today, tomorrow, and major_day (3 calls instead of 30!)
+    assert len(coord.data) == 30
+    assert mock_llm.async_analyze_day.call_count == 3
+
+    # Major event gift task moved into the 7..14 days before window (days 0..5 before major_day)
+    placed_days = [
+        d for d in coord.data.values()
+        if any(t.uid == "gift_1" for t in d.hidden_tasks)
+    ]
+    assert len(placed_days) == 1
+    lead_actual = (major_day - placed_days[0].date).days
+    assert 7 <= lead_actual <= 14
+    assert len(coord.data[major_day.isoformat()].linked_prep_tasks) == 1

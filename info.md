@@ -2,6 +2,11 @@
 
 Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Modell deiner Wahl, berechne den täglichen **Mental Load (0–100%)**, mache **unsichtbare Kopf-Aufgaben** direkt in `calendar.mental_load` sichtbar und löse aktive Smart-Home-Reaktionen aus.
 
+## Neu in v1.5.0
+
+- 📅 **30-Tage-Horizont & 7–14 Tage Vorlauf für große Termine:** Geburtstage, Geschenke, Reisen, Einschulung oder Feiern werden 7–14 Tage vorher auf einen ruhigen Tag vorgezogen; leere Zukunftstage sparen sich überflüssige KI-Aufrufe.
+- 📱 **Scrollbare 30-Tage-Leiste in der Dashboard-Card** mit Aufgaben-Punkten pro Tag.
+
 ## Neu in v1.4.0
 
 - 📆 **Vorlauf-Planung & Load-Balancing:** Besorgungen (Bargeld, Geschenke, Dokumente) und Vorabend-Packen werden automatisch auf ruhige Vortage (z. B. deinen 3%-Tag) vorgezogen statt 20 Min vor Termin zu erscheinen.

@@ -211,12 +211,21 @@ class MentalLoadCard extends HTMLElement {
         .muted { font-size: 0.84rem; color: var(--secondary-text-color); line-height: 1.4; }
         .heatmap {
           display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px;
-          margin: 14px 0; overflow-x: auto;
+          margin: 14px 0; overflow-x: auto; padding-bottom: 4px;
+        }
+        .heatmap.scroll-30 {
+          grid-template-columns: none;
+          grid-auto-flow: column;
+          grid-auto-columns: minmax(54px, 1fr);
         }
         .day-cell {
           text-align: center; padding: 8px 4px; border-radius: 10px; cursor: pointer;
           background: var(--secondary-background-color); border: 2px solid transparent;
           border-bottom: 3px solid var(--divider-color); transition: transform 0.12s ease, border-color 0.12s ease;
+          position: relative;
+        }
+        .task-dot {
+          font-size: 0.65rem; color: var(--primary-color); font-weight: 700; margin-top: 2px;
         }
         .day-cell:hover { transform: translateY(-1px); }
         .day-cell.active { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 12%, var(--secondary-background-color)); }
@@ -294,14 +303,16 @@ class MentalLoadCard extends HTMLElement {
         </div>
 
         ${dailyScores.length ? `
-          <div class="heatmap">
+          <div class="heatmap ${dailyScores.length > 7 ? "scroll-30" : ""}">
             ${dailyScores.map((d) => {
               const isSelected = d.date === activeDay.date;
+              const taskCnt = Number(d.hidden_tasks_count) || 0;
               return `
                 <div class="day-cell ${isSelected ? "active" : ""}" data-date="${d.date}" style="border-bottom-color: ${this._levelColor(d.level)}">
                   <div class="day-name">${this._weekdayShort(d.date)}</div>
                   <div class="day-date">${d.date.slice(8)}.${d.date.slice(5, 7)}.</div>
                   <div class="day-score">${d.score}%</div>
+                  ${taskCnt > 0 ? `<div class="task-dot">• ${taskCnt}</div>` : ""}
                 </div>
               `;
             }).join("")}

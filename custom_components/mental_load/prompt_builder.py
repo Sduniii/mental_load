@@ -182,7 +182,7 @@ Return ONLY a single valid JSON object (no markdown fences, no prose outside JSO
       "title": "<short actionable title of the invisible task>",
       "category": "<prep | travel | packing | followup | mental_note>",
       "placement_mode": "<same_day | previous_evening | load_balanced>",
-      "lead_days": <integer 0-4 (0=same day, 1=previous evening for packing/morning prep, 1-4=load_balanced for errands like cash/gifts/docs)>,
+      "lead_days": <integer 0-14 (0=same day, 1=previous evening for packing/morning prep, 1-4=load_balanced errands, 7-14=major events like birthdays/gifts/trips/parties/school/holidays)>,
       "offset_type": "<before | after>",
       "offset_minutes": <integer minutes before event start or after event end, e.g. 20>,
       "duration_minutes": <integer duration 5-60>,
@@ -334,6 +334,7 @@ def _infer_placement_metadata(
     start_dt: datetime.datetime,
     raw_mode: Any = None,
     raw_lead: Any = None,
+    parent_summary: str = "",
 ) -> tuple[str, int]:
     """Classify whether a hidden task belongs on the same day, previous evening, or an earlier low-load day."""
     if category in ("travel", "followup"):
@@ -342,16 +343,25 @@ def _infer_placement_metadata(
     valid_modes = {"same_day", "previous_evening", "load_balanced"}
     mode = str(raw_mode or "").strip().lower()
     if mode in valid_modes:
-        lead = max(0, min(4, int(raw_lead if raw_lead is not None else (1 if mode == "previous_evening" else 2 if mode == "load_balanced" else 0))))
+        lead = max(0, min(14, int(raw_lead if raw_lead is not None else (1 if mode == "previous_evening" else 2 if mode == "load_balanced" else 0))))
         if mode != "same_day" and lead == 0:
             lead = 1
         return mode, lead
 
-    combined = f"{title} {' '.join(checklist)}".lower()
+    combined = f"{parent_summary} {title} {' '.join(checklist)}".lower()
+    major_keywords = (
+        "geburtstag", "kindergeburtstag", "birthday", "geschenk", "bestellen",
+        "einschulung", "urlaub", "reise", "vacation", "trip", "hochzeit",
+        "wedding", "weihnachten", "christmas", "feier", "party", "gäste",
+        "gastgeber", "prüfung", "präsentation", "operation", "klinik",
+    )
+    if any(kw in combined for kw in major_keywords):
+        return "load_balanced", 12
+
     errand_keywords = (
-        "bargeld", "abheben", "geschenk", "kaufen", "besorgen",
+        "bargeld", "abheben", "kaufen", "besorgen",
         "überweisung", "rezept", "karte", "ferien", "gegenprüfen",
-        "gift", "cash", "buy", "withdraw", "errand", "schedule",
+        "cash", "buy", "withdraw", "errand", "schedule",
     )
     if any(kw in combined for kw in errand_keywords):
         return "load_balanced", 3
@@ -408,6 +418,7 @@ def parse_llm_day_response(
             start_dt=start_dt,
             raw_mode=item.get("placement_mode"),
             raw_lead=item.get("lead_days"),
+            parent_summary=parent_summary,
         )
         hidden_tasks.append(
             HiddenTask(
@@ -656,6 +667,7 @@ def analyze_day_heuristic(
             category=task.category,
             checklist=task.checklist,
             start_dt=task.start,
+            parent_summary=task.parent_event_summary,
         )
         task.placement_mode = mode
         task.lead_days = lead

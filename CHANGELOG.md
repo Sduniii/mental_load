@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.5.0] — 2026-11-23
+
+### Added
+- **30-Day Forecast Horizon:** Extended `horizon_days` up to **30 days** (new default: `30`) with a fast empty-day path so empty future days do not waste LLM API/CLI calls.
+- **7–14 Day Lead Window for Major Events:** Big events (birthdays, gifts, vacations/trips, parties, school enrollment, presentations, hospital visits) now automatically schedule advance preparation **7–14 days ahead** onto the calmest day in that window.
+- **Scrollable 30-Day Ribbon in `custom:mental-load-card`:** Smooth horizontally scrollable day selector with per-day hidden task count indicators (`• N`).
+
+---
+
 ## [1.4.0] — 2026-11-23
 
 ### Added

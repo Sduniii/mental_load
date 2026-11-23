@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "mental_load"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 URL_BASE = "/mental_load_card"
 JSMODULES = [
@@ -99,7 +99,7 @@ CONF_REACTION_ON_WARNING = "reaction_on_warning"
 CONF_REACTION_ON_CRITICAL = "reaction_on_critical"
 
 # Defaults
-DEFAULT_HORIZON_DAYS = 7
+DEFAULT_HORIZON_DAYS = 30
 DEFAULT_UPDATE_INTERVAL = 60
 DEFAULT_TEMPERATURE = 0.2
 DEFAULT_LANGUAGE = "de"

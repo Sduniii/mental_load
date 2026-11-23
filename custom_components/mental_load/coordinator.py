@@ -53,7 +53,7 @@ from .const import (
 )
 from .llm_providers import LLMProviderClient
 from .models import CalendarEventInput, DayLoadAnalysis, FeedbackEntry, score_to_level
-from .prompt_builder import _format_badge_summary, get_factor_weights
+from .prompt_builder import _format_badge_summary, analyze_day_heuristic, get_factor_weights
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -177,7 +177,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         """Fetch calendars + HA context, score each day, sync todos, and run reactions."""
         await self.async_load_state()
         config = self.merged_config
-        horizon = max(1, min(14, int(config.get(CONF_HORIZON_DAYS, DEFAULT_HORIZON_DAYS))))
+        horizon = max(1, min(30, int(config.get(CONF_HORIZON_DAYS, DEFAULT_HORIZON_DAYS))))
 
         now = dt_util.now()
         today = now.date()
@@ -208,13 +208,23 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                 results[day_str] = analysis
                 continue
 
-            analysis = await self.llm_client.async_analyze_day(
-                target_date=day_date,
-                events=day_events,
-                ha_context=ha_context,
-                config=config,
-                feedback_history=self.feedback_history,
-            )
+            if not day_events and offset > 1:
+                analysis = analyze_day_heuristic(
+                    target_date=day_date,
+                    events=[],
+                    ha_context=ha_context,
+                    config=config,
+                    feedback_history=self.feedback_history,
+                    provider_label="fast_empty_day",
+                )
+            else:
+                analysis = await self.llm_client.async_analyze_day(
+                    target_date=day_date,
+                    events=day_events,
+                    ha_context=ha_context,
+                    config=config,
+                    feedback_history=self.feedback_history,
+                )
             self._cache[day_str] = {
                 "fingerprint": fingerprint,
                 "analysis": analysis.to_dict(),
@@ -520,15 +530,25 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                         target_hour = 19
                         target_minute = 30
                 elif task.placement_mode == "load_balanced":
-                    max_lead = max(1, min(4, task.lead_days or 3))
+                    max_lead = max(1, min(14, task.lead_days or 3))
+                    min_lead = 7 if max_lead >= 7 else 1
                     candidates: list[DayLoadAnalysis] = []
-                    for back in range(1, max_lead + 1):
+                    for back in range(min_lead, max_lead + 1):
                         cand_date = source_day.date - datetime.timedelta(days=back)
                         if cand_date < today:
                             continue
                         cand = rebalanced.get(cand_date.isoformat())
                         if cand is not None:
                             candidates.append(cand)
+                    if not candidates and min_lead > 1:
+                        # Fallback if major event is fewer than 7 days away
+                        for back in range(1, min_lead):
+                            cand_date = source_day.date - datetime.timedelta(days=back)
+                            if cand_date < today:
+                                continue
+                            cand = rebalanced.get(cand_date.isoformat())
+                            if cand is not None:
+                                candidates.append(cand)
                     if candidates:
                         # Pick the day with the lowest base_score (preferring earlier calm day on ties)
                         target_day = min(candidates, key=lambda c: (c.base_score, c.date))
