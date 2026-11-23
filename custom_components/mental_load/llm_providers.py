@@ -31,10 +31,12 @@ from .const import (
 from .models import CalendarEventInput, DayLoadAnalysis, FeedbackEntry
 from .prompt_builder import (
     analyze_day_heuristic,
+    build_batch_user_prompt,
     build_day_user_prompt,
     build_project_breakdown_prompt,
     build_system_prompt,
     decompose_project_todos_heuristic,
+    parse_llm_batch_response,
     parse_llm_day_response,
     parse_project_breakdown_response,
 )
@@ -69,6 +71,7 @@ class LLMProviderClient:
         ha_context: dict[str, Any],
         config: dict[str, Any],
         feedback_history: list[FeedbackEntry],
+        include_live_context: bool = True,
     ) -> DayLoadAnalysis:
         """Analyze one day using the configured AI provider with automatic heuristic fallback."""
         provider = str(config.get(CONF_PROVIDER, PROVIDER_HEURISTIC))
@@ -82,8 +85,14 @@ class LLMProviderClient:
                 provider_label=PROVIDER_HEURISTIC,
             )
 
-        system_prompt = build_system_prompt(config, feedback_history)
-        user_prompt = build_day_user_prompt(target_date, events, ha_context, config)
+        system_prompt = build_system_prompt(config, feedback_history, batch_mode=False)
+        user_prompt = build_day_user_prompt(
+            target_date,
+            events,
+            ha_context,
+            config,
+            include_live_context=include_live_context,
+        )
 
         try:
             raw_response = await self._async_dispatch_provider(
@@ -114,6 +123,81 @@ class LLMProviderClient:
                 feedback_history=feedback_history,
                 provider_label=f"{PROVIDER_HEURISTIC}_fallback",
             )
+
+    async def async_analyze_days_batch(
+        self,
+        days_items: list[tuple[datetime.date, list[CalendarEventInput], dict[str, Any], bool]],
+        config: dict[str, Any],
+        feedback_history: list[FeedbackEntry],
+    ) -> dict[str, DayLoadAnalysis]:
+        """Analyze up to 7 uncached days in a single LLM request, falling back cleanly per missing day."""
+        if not days_items:
+            return {}
+        if len(days_items) == 1:
+            day_date, day_events, day_ctx, include_live = days_items[0]
+            res = await self.async_analyze_day(
+                target_date=day_date,
+                events=day_events,
+                ha_context=day_ctx,
+                config=config,
+                feedback_history=feedback_history,
+                include_live_context=include_live,
+            )
+            return {day_date.isoformat(): res}
+
+        provider = str(config.get(CONF_PROVIDER, PROVIDER_HEURISTIC))
+        if provider == PROVIDER_HEURISTIC:
+            return {
+                day_date.isoformat(): analyze_day_heuristic(
+                    target_date=day_date,
+                    events=day_events,
+                    ha_context=day_ctx,
+                    config=config,
+                    feedback_history=feedback_history,
+                    provider_label=PROVIDER_HEURISTIC,
+                )
+                for day_date, day_events, day_ctx, _ in days_items
+            }
+
+        days_map = {day_date.isoformat(): (day_date, day_events) for day_date, day_events, _, _ in days_items}
+        results: dict[str, DayLoadAnalysis] = {}
+        try:
+            system_prompt = build_system_prompt(config, feedback_history, batch_mode=True)
+            user_prompt = build_batch_user_prompt(days_items, config)
+            max_tok = min(4096, max(1500, 650 * len(days_items)))
+            raw_response = await self._async_dispatch_provider(
+                provider=provider,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                config=config,
+                max_tokens=max_tok,
+            )
+            results = parse_llm_batch_response(
+                raw_text=raw_response,
+                days_map=days_map,
+                config=config,
+                provider_used=provider,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "LLM batch request (%s, %d days) failed (%s); falling back per day",
+                provider,
+                len(days_items),
+                err,
+            )
+
+        for day_date, day_events, day_ctx, include_live in days_items:
+            day_str = day_date.isoformat()
+            if day_str not in results:
+                results[day_str] = await self.async_analyze_day(
+                    target_date=day_date,
+                    events=day_events,
+                    ha_context=day_ctx,
+                    config=config,
+                    feedback_history=feedback_history,
+                    include_live_context=include_live,
+                )
+        return results
 
     async def async_breakdown_projects(
         self,
@@ -151,6 +235,7 @@ class LLMProviderClient:
         system_prompt: str,
         user_prompt: str,
         config: dict[str, Any],
+        max_tokens: int = 2048,
     ) -> str:
         """Dispatch prompt to the selected provider endpoint."""
         model = str(config.get(CONF_MODEL) or DEFAULT_MODELS.get(provider, ""))
@@ -189,6 +274,7 @@ class LLMProviderClient:
                 temperature=temperature,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                max_tokens=max_tokens,
             )
         if provider == PROVIDER_GOOGLE:
             return await self._call_google_gemini(
@@ -266,8 +352,9 @@ class LLMProviderClient:
         temperature: float,
         system_prompt: str,
         user_prompt: str,
+        max_tokens: int = 2048,
     ) -> str:
-        """Call Anthropic Messages API."""
+        """Call Anthropic Messages API with ephemeral system prompt caching."""
         if not api_key:
             raise LLMProviderError("API key is required for Anthropic")
 
@@ -278,9 +365,15 @@ class LLMProviderClient:
         }
         payload = {
             "model": model,
-            "max_tokens": 2048,
+            "max_tokens": max_tokens,
             "temperature": temperature,
-            "system": system_prompt,
+            "system": [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             "messages": [{"role": "user", "content": user_prompt}],
         }
         data = await self._post_json(f"{base_url}/messages", headers, payload)

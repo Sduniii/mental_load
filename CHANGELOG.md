@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.9.0] — 2026-11-23
+
+### Performance & Token Optimization (~75–90% fewer tokens)
+- **Stabilized Cache Fingerprints (`_compute_day_fingerprint`):** Weather and energy sensors are only included for today and tomorrow (`offset <= 1`) and quantized (weather condition without decimal temperature jitter; energy rounded to 10% buckets), preventing hourly cache invalidation across the 30-day horizon.
+- **Multi-Day LLM Batching (`async_analyze_days_batch`):** Bundles up to 7 uncached non-empty days into a single structured request (`{"days": {...}}`), cutting redundant system-prompt input tokens by ~65–75% on cold refreshes while falling back cleanly per missing day.
+- **Deduplicated Children & Defaults Context:** Moved full child profile & `[Stundenplan/Kind]` instructions + time defaults exclusively into `build_system_prompt()`, keeping only ≤14-day birthday alerts in day prompts.
+- **Compact Prompts & Noise Filtering:** Removed `Gap Xm` noise for normal spacing, omitted `"Not configured"` fields, shortened event descriptions (`120` chars), trimmed project detail prefixes, and fast-pathed empty today/tomorrow days (`0` tokens).
+- **Anthropic Prompt Caching:** Sends `system` with `cache_control: {"type": "ephemeral"}` alongside static system-prompt prefixes for OpenAI and Google Gemini.
+
+---
+
 ## [1.8.0] — 2026-11-23
 
 ### Added

@@ -134,7 +134,63 @@ async def test_anthropic_adapter() -> None:
     )
     assert result.provider_used == PROVIDER_ANTHROPIC
     assert session.calls[0]["headers"]["x-api-key"] == "ant-key"
+    assert session.calls[0]["json"]["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert result.score > 50
+
+
+async def test_batch_analysis_single_call_and_missing_day_fallback() -> None:
+    d1 = datetime.date(2026, 11, 23)
+    d2 = datetime.date(2026, 11, 24)
+    batch_payload = json.dumps({"days": {d1.isoformat(): json.loads(SAMPLE_LLM_JSON)}})
+
+    class _SeqSession:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+            self._responses = [
+                _FakeResponse(200, {"choices": [{"message": {"content": batch_payload}}]}),
+                _FakeResponse(200, {"choices": [{"message": {"content": SAMPLE_LLM_JSON}}]}),
+            ]
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, Any]) -> _FakeResponse:
+            self.calls.append({"url": url, "headers": headers, "json": json})
+            return self._responses.pop(0)
+
+    session = _SeqSession()
+    client = LLMProviderClient(hass=None, session=session)
+    cfg = {CONF_PROVIDER: PROVIDER_OPENAI, CONF_API_KEY: "test-key"}
+
+    results = await client.async_analyze_days_batch(
+        [
+            (d1, _sample_events(), {}, True),
+            (d2, _sample_events(), {}, False),
+        ],
+        cfg,
+        [],
+    )
+    assert set(results.keys()) == {d1.isoformat(), d2.isoformat()}
+    # 1st call returned batch (d1 present, d2 missing); 2nd call cleanly fell back only for missing d2
+    assert len(session.calls) == 2
+
+    # When batch includes both days, strictly 1 HTTP call is made
+    full_batch = json.dumps(
+        {
+            "days": {
+                d1.isoformat(): json.loads(SAMPLE_LLM_JSON),
+                d2.isoformat(): json.loads(SAMPLE_LLM_JSON),
+            }
+        }
+    )
+    single_session = _FakeSession(
+        _FakeResponse(200, {"choices": [{"message": {"content": full_batch}}]})
+    )
+    single_client = LLMProviderClient(hass=None, session=single_session)
+    full_results = await single_client.async_analyze_days_batch(
+        [(d1, _sample_events(), {}, True), (d2, _sample_events(), {}, False)],
+        cfg,
+        [],
+    )
+    assert set(full_results.keys()) == {d1.isoformat(), d2.isoformat()}
+    assert len(single_session.calls) == 1
 
 
 async def test_google_gemini_adapter() -> None:

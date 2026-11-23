@@ -19,9 +19,11 @@ from custom_components.mental_load.const import (
 from custom_components.mental_load.models import CalendarEventInput, FeedbackEntry
 from custom_components.mental_load.prompt_builder import (
     analyze_day_heuristic,
+    build_batch_user_prompt,
     build_day_user_prompt,
     build_system_prompt,
     parse_children_profiles,
+    parse_llm_batch_response,
     parse_llm_day_response,
 )
 
@@ -195,10 +197,15 @@ def test_children_profiles_age_and_timetable_handling() -> None:
     sys_prompt = build_system_prompt(cfg, [])
     assert "Children & School Timetable Context" in sys_prompt
     assert "calendar.stundenplan_kind" in sys_prompt
+    assert "age **8 Jahre**" in sys_prompt
+    assert len(sys_prompt) < 2250
+    assert len(build_system_prompt({}, [])) < 1600
 
     usr_prompt = build_day_user_prompt(ref, [], {}, cfg)
-    assert "age **8 Jahre**" in usr_prompt
+    assert "Children & School Timetable Context" not in usr_prompt
     assert "Upcoming birthday in 7 days" in usr_prompt
+    assert "Not configured" not in usr_prompt
+    assert len(usr_prompt) < 300
 
     tz = datetime.timezone(datetime.timedelta(hours=1))
     school_events = [
@@ -227,3 +234,36 @@ def test_children_profiles_age_and_timetable_handling() -> None:
     school_only = analyze_day_heuristic(ref, school_events, {}, cfg)
     assert school_only.factor_breakdown[FACTOR_PACING] < 15
     assert any("Schulsachen packen" in t.title and "Sportunterricht" in t.title for t in school_only.hidden_tasks)
+
+
+def test_batch_prompt_and_parser_roundtrip() -> None:
+    d1 = datetime.date(2026, 11, 23)
+    d2 = datetime.date(2026, 11, 24)
+    ev1 = _events_for_day()
+    ev2 = _events_for_day()[:1]
+    batch_prompt = build_batch_user_prompt(
+        [
+            (d1, ev1, {"open_todos": ["A"], "weather": "rainy, 6°"}, True),
+            (d2, ev2, {"open_todos": ["A"], "weather": "rainy, 6°"}, False),
+        ],
+        {},
+    )
+    assert "Date: 2026-11-23" in batch_prompt
+    assert "Date: 2026-11-24" in batch_prompt
+    assert "weather=rainy, 6°" in batch_prompt
+    assert batch_prompt.count("weather=") == 1
+
+    raw = """{
+      "days": {
+        "2026-11-23": {"score": 72, "top_stressor": "Arzt", "reasoning": "Voll", "factor_breakdown": {"pacing_context": 80, "social_battery": 60, "mobility": 70, "ha_context": 50, "hidden_work": 75}, "hidden_tasks": [], "recommendations": ["Pause"]},
+        "2026-11-24": {"score": 35, "top_stressor": "Sprint", "reasoning": "Ruhig", "factor_breakdown": {"pacing_context": 30, "social_battery": 40, "mobility": 20, "ha_context": 30, "hidden_work": 40}, "hidden_tasks": [], "recommendations": ["Fokus"]}
+      }
+    }"""
+    parsed = parse_llm_batch_response(
+        raw,
+        {d1.isoformat(): (d1, ev1), d2.isoformat(): (d2, ev2)},
+        {},
+        "openai",
+    )
+    assert set(parsed.keys()) == {"2026-11-23", "2026-11-24"}
+    assert parsed["2026-11-23"].score > parsed["2026-11-24"].score

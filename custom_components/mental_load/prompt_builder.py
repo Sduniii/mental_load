@@ -311,17 +311,15 @@ def _format_badge_summary(
 
 
 def _build_event_gaps(events: list[CalendarEventInput]) -> list[str]:
-    """Compute human-readable gap/overlap notes between consecutive timed events."""
+    """Compute compact gap/overlap notes ONLY for tight transitions (<15m) or overlaps."""
     timed = sorted((e for e in events if not e.all_day), key=lambda ev: ev.start)
     notes: list[str] = []
     for prev_ev, curr_ev in zip(timed, timed[1:]):
         gap_min = int((curr_ev.start - prev_ev.end).total_seconds() // 60)
         if gap_min < 0:
-            notes.append(f"OVERLAP ({abs(gap_min)}m): '{prev_ev.summary}' overlaps '{curr_ev.summary}'")
+            notes.append(f"OVERLAP ({abs(gap_min)}m): '{prev_ev.summary}' / '{curr_ev.summary}'")
         elif gap_min < 15:
             notes.append(f"BACK-TO-BACK ({gap_min}m gap): '{prev_ev.summary}' -> '{curr_ev.summary}'")
-        else:
-            notes.append(f"Gap {gap_min}m between '{prev_ev.summary}' and '{curr_ev.summary}'")
     return notes
 
 
@@ -439,7 +437,7 @@ def format_children_context_block(
     config: dict[str, Any],
     target_date: datetime.date | None = None,
 ) -> str:
-    """Format configured children profiles + child/school calendar rules for LLM prompts."""
+    """Format configured children profiles + child/school calendar rules once for system prompt."""
     ref = target_date or datetime.date.today()
     children = parse_children_profiles(str(config.get(CONF_CHILDREN_PROFILES, DEFAULT_CHILDREN_PROFILES) or ""), ref)
     child_cals = [str(c).strip() for c in (config.get(CONF_CHILDREN_CALENDARS, []) or []) if str(c).strip()]
@@ -448,107 +446,153 @@ def format_children_context_block(
 
     lines: list[str] = ["### Children & School Timetable Context"]
     for child in children:
-        note_str = f" | Note: {child['note']}" if child.get("note") else ""
+        note_str = f" | {child['note']}" if child.get("note") else ""
         bday_note = ""
         days_until = child.get("days_until_birthday")
         if days_until == 0:
             bday_note = " | 🎂 BIRTHDAY TODAY!"
         elif isinstance(days_until, int) and 1 <= days_until <= 14:
-            bday_note = f" | 🎂 Upcoming birthday in {days_until} days (plan gift/party prep ahead)"
+            bday_note = f" | 🎂 Birthday in {days_until}d"
         lines.append(
-            f"- Child `{child['name']}`: age **{child['age_display']}** (born {child.get('birthdate') or 'unknown'}) — "
+            f"- {child['name']}: age **{child['age_display']}** ({child.get('birthdate') or '?'}) — "
             f"{child['stage_hint']}{note_str}{bday_note}"
         )
 
     if child_cals:
         lines.append(
-            "- Dedicated child/school timetable calendars "
-            f"({', '.join(child_cals)}) are tagged `[Stundenplan/Kind]`."
-        )
-        lines.append(
-            "  IMPORTANT TIMETABLE RULE: Consecutive school lessons (e.g. Mathe, Deutsch, Kunst) belong to the child's timetable, "
-            "NOT the parent's own meetings — do NOT score individual school lessons as parent back-to-back context switching! "
-            "Instead derive ONLY the real parent load: morning drop-off / afternoon pick-up logistics (depending on child's age), "
-            "special schedule changes (Ausfall, früher Schluss, Elternabend), and evening-before packing/prep (e.g. Sport -> Sportbeutel, Schwimmen -> Schwimmsachen, Ausflug -> Rucksack/Proviant)."
+            f"- Child calendars ({', '.join(child_cals)}) are tagged `[Stundenplan/Kind]`: "
+            "do NOT score consecutive school lessons as parent context-switching; only extract age-appropriate "
+            "drop-off/pick-up logistics, schedule changes (Ausfall/Elternabend), and evening-before packing (Sport/Schwimmen/Ausflug)."
         )
     return "\n".join(lines)
+
+
+def format_children_day_alerts(
+    config: dict[str, Any],
+    target_date: datetime.date,
+) -> str:
+    """Return compact per-day child alerts ONLY when a child's birthday is within 14 days."""
+    children = parse_children_profiles(
+        str(config.get(CONF_CHILDREN_PROFILES, DEFAULT_CHILDREN_PROFILES) or ""),
+        target_date,
+    )
+    alerts: list[str] = []
+    for child in children:
+        days_until = child.get("days_until_birthday")
+        if days_until == 0:
+            alerts.append(f"- {child['name']} ({child['age_display']}): 🎂 BIRTHDAY TODAY!")
+        elif isinstance(days_until, int) and 1 <= days_until <= 14:
+            alerts.append(
+                f"- {child['name']} ({child['age_display']}): 🎂 Upcoming birthday in {days_until} days (plan gift/party prep ahead)"
+            )
+    return "\n".join(alerts)
 
 
 def build_system_prompt(
     config: dict[str, Any],
     feedback_history: list[FeedbackEntry],
+    batch_mode: bool = False,
 ) -> str:
-    """Build the system instruction prompt covering all 5 factors and hidden-task extraction."""
+    """Build compact system instruction prompt covering 5 factors, children rules, defaults & JSON schema."""
     language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
     profile = str(config.get(CONF_USER_PROFILE, DEFAULT_USER_PROFILE)).strip()
     children_block = format_children_context_block(config)
     weights = get_factor_weights(config)
+    prep_min = int(config.get(CONF_DEFAULT_PREP_MINUTES, DEFAULT_PREP_MINUTES))
+    travel_min = int(config.get(CONF_DEFAULT_TRAVEL_MINUTES, DEFAULT_TRAVEL_MINUTES))
+    followup_min = int(config.get(CONF_DEFAULT_FOLLOWUP_MINUTES, DEFAULT_FOLLOWUP_MINUTES))
 
     lang_instruction = (
-        "Respond in German for all natural language fields (reasoning, title, checklist, recommendations, top_stressor)."
+        "Respond in German for natural text fields (reasoning, title, checklist, recommendations, top_stressor)."
         if language.startswith("de")
-        else "Respond in English for all natural language fields."
+        else "Respond in English for natural text fields."
     )
 
-    feedback_lines = []
-    for entry in feedback_history[-15:]:
-        feedback_lines.append(
-            f"- {entry.date_str}: AI={entry.previous_score}%, User felt={entry.perceived_score}% "
-            f"({entry.adjustment}). Note: {entry.note or 'none'}"
-        )
-    feedback_block = "\n".join(feedback_lines) if feedback_lines else "- No user calibration feedback yet."
+    feedback_section = ""
+    if feedback_history:
+        fb_lines = [
+            f"- {e.date_str}: AI {e.previous_score}%->User {e.perceived_score}% ({e.adjustment})"
+            + (f" [{e.note}]" if e.note else "")
+            for e in feedback_history[-6:]
+        ]
+        feedback_section = "\nCalibration:\n" + "\n".join(fb_lines) + "\n"
 
     children_section = f"\n{children_block}\n" if children_block else ""
+    day_schema = (
+        '{"score":0-100,"top_stressor":"2-5 words","reasoning":"2 short sentences",'
+        '"factor_breakdown":{"pacing_context":0-100,"social_battery":0-100,"mobility":0-100,"ha_context":0-100,"hidden_work":0-100},'
+        '"hidden_tasks":[{"parent_event_summary":"exact event summary","title":"short title","category":"prep|travel|packing|followup|mental_note",'
+        '"placement_mode":"same_day|previous_evening|load_balanced","lead_days":"0-14 (0=same,1=prev_eve,1-4=errands,7-14=major)",'
+        '"offset_type":"before|after","offset_minutes":20,"duration_minutes":"5-60","load_contribution":"1-35","checklist":["step1","step2"]}],'
+        '"recommendations":["tip1","tip2"]}'
+    )
+    output_contract = (
+        f'Return ONLY valid JSON object (no markdown) with key "days" mapping each YYYY-MM-DD date string to {day_schema}: {{"days":{{"YYYY-MM-DD":...}}}}'
+        if batch_mode
+        else f"Return ONLY valid JSON object (no markdown): {day_schema}"
+    )
 
-    return f"""You are an empathetic Cognitive Load & Invisible Mental Work Analyst for Home Assistant.
-Your job is to evaluate the user's daily calendar and Home Assistant context across 5 factors, calculate an honest mental load score (0-100), and EXPLICITLY UNCOVER the invisible head-tasks ("unsichtbare Kopfarbeit") attached to each calendar event so they can be made visible on the user's calendar and todo list.
+    return (
+        "Cognitive Load & Invisible Mental Work Analyst for Home Assistant. Score daily load (0-100) across 5 factors and uncover hidden head-tasks.\n"
+        f"{lang_instruction}\n"
+        f"Profile: {profile}{children_section}\n"
+        "Factors:\n"
+        f"1. `{FACTOR_PACING}` (weight {weights[FACTOR_PACING]:.2f}x): tight gaps (<15m), overlaps, domain switches\n"
+        f"2. `{FACTOR_SOCIAL}` (weight {weights[FACTOR_SOCIAL]:.2f}x): social drain, evening/group/high-stakes vs recovery\n"
+        f"3. `{FACTOR_MOBILITY}` (weight {weights[FACTOR_MOBILITY]:.2f}x): travel, location changes, bad weather\n"
+        f"4. `{FACTOR_HA_CONTEXT}` (weight {weights[FACTOR_HA_CONTEXT]:.2f}x): open todos, low energy/recovery, harsh weather\n"
+        f"5. `{FACTOR_HIDDEN_WORK}` (weight {weights[FACTOR_HIDDEN_WORK]:.2f}x): docs, gifts, packing, prep, follow-up\n"
+        f"Task defaults: prep={prep_min}m, travel={travel_min}m, followup={followup_min}m.{feedback_section}\n"
+        f"{output_contract}"
+    )
 
-{lang_instruction}
 
-### User Personality & Lifestyle Profile
-{profile}
-{children_section}
+def _format_compact_day_block(
+    target_date: datetime.date,
+    events: list[CalendarEventInput],
+    ha_context: dict[str, Any],
+    config: dict[str, Any],
+    include_live_context: bool = True,
+) -> str:
+    """Render one day's compact event & context block (shared by single-day and batch prompts)."""
+    weekday = target_date.strftime("%A")
+    if not events:
+        events_text = "No events."
+    else:
+        lines = []
+        for idx, ev in enumerate(sorted(events, key=lambda x: x.start), start=1):
+            time_str = "ALL-DAY" if ev.all_day else f"{ev.start.strftime('%H:%M')}-{ev.end.strftime('%H:%M')}"
+            loc = f" @{ev.location}" if ev.location else ""
+            desc = f" | {ev.description[:120]}" if ev.description else ""
+            src = " [Stundenplan/Kind]" if "[stundenplan/kind]" in ev.source_calendar.lower() else ""
+            lines.append(f"{idx}. [{time_str}] {ev.summary}{loc}{desc}{src}")
+        events_text = "\n".join(lines)
 
-### The 5 Mental Load Factors & User Weights
-1. `pacing_context` (weight {weights[FACTOR_PACING]:.2f}x): Back-to-back events (<15m gap), overlaps, lack of recovery buffers, and context switches between domains (work, family, medical, errands).
-2. `social_battery` (weight {weights[FACTOR_SOCIAL]:.2f}x): Social interaction drain, group events, evening events, conflict/high-stakes meetings vs. restorative events, evaluated through the user profile above.
-3. `mobility` (weight {weights[FACTOR_MOBILITY]:.2f}x): Physical location changes, commuting, logistics, bad weather impact on travel.
-4. `ha_context` (weight {weights[FACTOR_HA_CONTEXT]:.2f}x): Live Home Assistant context such as open todo backlog, low sleep/recovery/body-battery scores, and harsh weather.
-5. `hidden_work` (weight {weights[FACTOR_HIDDEN_WORK]:.2f}x): Invisible cognitive overhead (remembering documents, gifts, preparing talking points, packing bags, post-appointment follow-up).
+    parts = [f"Date: {target_date.isoformat()} ({weekday})", events_text]
 
-### Factor 5: Learned User Calibration Memory (Recent Feedback)
-{feedback_block}
+    gaps = _build_event_gaps(events)
+    if gaps:
+        parts.append("Gaps: " + "; ".join(gaps))
 
-### Strict Output Contract
-Return ONLY a single valid JSON object (no markdown fences, no prose outside JSON) with this exact structure:
-{{
-  "score": <integer 0-100>,
-  "top_stressor": "<short 2-5 word headline of the main load driver>",
-  "reasoning": "<2-3 empathetic sentences explaining why the day has this load>",
-  "factor_breakdown": {{
-    "pacing_context": <integer 0-100>,
-    "social_battery": <integer 0-100>,
-    "mobility": <integer 0-100>,
-    "ha_context": <integer 0-100>,
-    "hidden_work": <integer 0-100>
-  }},
-  "hidden_tasks": [
-    {{
-      "parent_event_summary": "<exact summary of the matching calendar event>",
-      "title": "<short actionable title of the invisible task>",
-      "category": "<prep | travel | packing | followup | mental_note>",
-      "placement_mode": "<same_day | previous_evening | load_balanced>",
-      "lead_days": <integer 0-14 (0=same day, 1=previous evening for packing/morning prep, 1-4=load_balanced errands, 7-14=major events like birthdays/gifts/trips/parties/school/holidays)>,
-      "offset_type": "<before | after>",
-      "offset_minutes": <integer minutes before event start or after event end, e.g. 20>,
-      "duration_minutes": <integer duration 5-60>,
-      "load_contribution": <integer 1-35>,
-      "checklist": ["<concrete sub-step 1>", "<concrete sub-step 2>"]
-    }}
-  ],
-  "recommendations": ["<practical buffer/self-care tip 1>", "<tip 2>"]
-}}
-"""
+    child_alerts = format_children_day_alerts(config, target_date)
+    if child_alerts:
+        parts.append(child_alerts)
+
+    ctx_items: list[str] = []
+    todos = ha_context.get("open_todos", [])
+    if todos:
+        ctx_items.append(f"{len(todos)} open tasks")
+    if include_live_context:
+        energy = ha_context.get("energy_sensor")
+        weather = ha_context.get("weather")
+        if energy:
+            ctx_items.append(f"energy={energy}")
+        if weather:
+            ctx_items.append(f"weather={weather}")
+    if ctx_items:
+        parts.append("HA: " + ", ".join(ctx_items))
+
+    return "\n".join(parts)
 
 
 def build_day_user_prompt(
@@ -556,57 +600,34 @@ def build_day_user_prompt(
     events: list[CalendarEventInput],
     ha_context: dict[str, Any],
     config: dict[str, Any],
+    include_live_context: bool = True,
 ) -> str:
-    """Build the user prompt containing one day's events and live HA context."""
-    weekday = target_date.strftime("%A")
-    prep_min = int(config.get(CONF_DEFAULT_PREP_MINUTES, DEFAULT_PREP_MINUTES))
-    travel_min = int(config.get(CONF_DEFAULT_TRAVEL_MINUTES, DEFAULT_TRAVEL_MINUTES))
-    followup_min = int(config.get(CONF_DEFAULT_FOLLOWUP_MINUTES, DEFAULT_FOLLOWUP_MINUTES))
-
-    if not events:
-        events_text = "No calendar events scheduled on this day."
-    else:
-        lines = []
-        for idx, ev in enumerate(sorted(events, key=lambda x: x.start), start=1):
-            time_str = "ALL-DAY" if ev.all_day else f"{ev.start.strftime('%H:%M')} - {ev.end.strftime('%H:%M')}"
-            loc = f" | Location: {ev.location}" if ev.location else ""
-            desc = f" | Notes: {ev.description[:240]}" if ev.description else ""
-            lines.append(f"{idx}. [{time_str}] {ev.summary}{loc}{desc} (source: {ev.source_calendar})")
-        events_text = "\n".join(lines)
-
-    gaps = _build_event_gaps(events)
-    gaps_text = "\n".join(f"- {g}" for g in gaps) if gaps else "- No tight transitions detected."
-
-    todos = ha_context.get("open_todos", [])
-    todo_summary = (
-        f"{len(todos)} open tasks (sample: {', '.join(todos[:8])})"
-        if todos
-        else "None configured or 0 open tasks"
+    """Build compact user prompt for one day's events and live HA context."""
+    return _format_compact_day_block(
+        target_date=target_date,
+        events=events,
+        ha_context=ha_context,
+        config=config,
+        include_live_context=include_live_context,
     )
-    energy = ha_context.get("energy_sensor") or "Not configured"
-    weather = ha_context.get("weather") or "Not configured"
-    children_block = format_children_context_block(config, target_date)
-    children_extra = f"\n{children_block}\n" if children_block else ""
 
-    return f"""Analyze mental load for date: {target_date.isoformat()} ({weekday}).
 
-### Scheduled Calendar Events
-{events_text}
-
-### Detected Pacing & Transition Gaps
-{gaps_text}
-{children_extra}
-### Live Home Assistant Context (Factor 4)
-- Open To-Do items: {todo_summary}
-- Sleep / Energy / Recovery sensor: {energy}
-- Weather condition: {weather}
-
-### Default Invisible Task Time Defaults
-- Standard prep block: {prep_min} min
-- Standard travel buffer: {travel_min} min
-- Standard follow-up block: {followup_min} min
-
-Uncover every realistic invisible task the user has to keep in mind for these appointments and return the JSON analysis."""
+def build_batch_user_prompt(
+    days_items: list[tuple[datetime.date, list[CalendarEventInput], dict[str, Any], bool]],
+    config: dict[str, Any],
+) -> str:
+    """Build compact multi-day user prompt bundling up to 7 uncached days per LLM call."""
+    blocks = [
+        _format_compact_day_block(
+            target_date=day_date,
+            events=day_events,
+            ha_context=day_ctx,
+            config=config,
+            include_live_context=include_live,
+        )
+        for day_date, day_events, day_ctx, include_live in days_items
+    ]
+    return "Analyze each day below and return JSON under `days`:\n\n" + "\n---\n".join(blocks)
 
 
 def _extract_json_object(raw_text: str) -> dict[str, Any]:
@@ -730,15 +751,14 @@ def _infer_placement_metadata(
     return "same_day", 0
 
 
-def parse_llm_day_response(
-    raw_text: str,
+def _parse_day_payload(
+    payload: dict[str, Any],
     target_date: datetime.date,
     events: list[CalendarEventInput],
     config: dict[str, Any],
     provider_used: str,
 ) -> DayLoadAnalysis:
-    """Parse raw LLM JSON output into a normalized DayLoadAnalysis."""
-    payload = _extract_json_object(raw_text)
+    """Parse one day's JSON dict payload into a normalized DayLoadAnalysis."""
     language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
     weights = get_factor_weights(config)
     tzinfo = events[0].start.tzinfo if events else datetime.datetime.now().astimezone().tzinfo
@@ -819,6 +839,50 @@ def parse_llm_day_response(
         cached=False,
         base_score=score,
     )
+
+
+def parse_llm_day_response(
+    raw_text: str,
+    target_date: datetime.date,
+    events: list[CalendarEventInput],
+    config: dict[str, Any],
+    provider_used: str,
+) -> DayLoadAnalysis:
+    """Parse raw LLM JSON output into a normalized DayLoadAnalysis."""
+    payload = _extract_json_object(raw_text)
+    return _parse_day_payload(
+        payload=payload,
+        target_date=target_date,
+        events=events,
+        config=config,
+        provider_used=provider_used,
+    )
+
+
+def parse_llm_batch_response(
+    raw_text: str,
+    days_map: dict[str, tuple[datetime.date, list[CalendarEventInput]]],
+    config: dict[str, Any],
+    provider_used: str,
+) -> dict[str, DayLoadAnalysis]:
+    """Parse raw multi-day batch JSON response into a dict keyed by YYYY-MM-DD."""
+    payload = _extract_json_object(raw_text)
+    raw_days = payload.get("days")
+    if not isinstance(raw_days, dict):
+        raw_days = payload
+    parsed: dict[str, DayLoadAnalysis] = {}
+    for day_str, day_payload in raw_days.items():
+        if day_str not in days_map or not isinstance(day_payload, dict):
+            continue
+        target_date, events = days_map[day_str]
+        parsed[day_str] = _parse_day_payload(
+            payload=day_payload,
+            target_date=target_date,
+            events=events,
+            config=config,
+            provider_used=provider_used,
+        )
+    return parsed
 
 
 def _classify_event_domain(summary: str) -> str:
@@ -1164,29 +1228,17 @@ def build_project_breakdown_prompt(
     project_items: list[dict[str, Any]],
     config: dict[str, Any],
 ) -> tuple[str, str]:
-    """Build (system_prompt, user_prompt) to decompose ongoing To-Dos into small weekend/weekday sub-tasks."""
+    """Build compact (system_prompt, user_prompt) to decompose To-Dos into small sub-tasks."""
     language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
-    lang_line = (
-        "Respond strictly in German for all titles and checklist steps."
-        if language.startswith("de")
-        else "Respond strictly in English for all titles and checklist steps."
-    )
+    lang_line = "Respond in German." if language.startswith("de") else "Respond in English."
     system_prompt = (
-        "You break large household/renovation/garden/admin To-Do items into realistic 20-45 minute starter steps "
-        "that can be scheduled onto calm weekends or free weekday afternoons.\n"
+        "Break large To-Dos into 20-45m starter steps for calm weekends or free weekday afternoons.\n"
         f"{lang_line}\n"
-        "PRIORITY RULES:\n"
-        "- The items are already ordered from highest to lowest priority.\n"
-        "- For [PRIO: HOCH] and [PRIO: MITTEL] items, return 2 concrete sequential steps first.\n"
-        "- For [PRIO: NIEDRIG] items, return at most 1 brief starter step at the end.\n"
-        "CRITICAL SUNDAY CONSTRAINT: On Sundays in Germany shops, hardware stores (Baumarkt), TÜV, offices, doctors, "
-        "and phone hotlines are CLOSED, and noisy power tools/garden machinery (schleifen, bohren, sägen, vertikutieren, mähen) "
-        "are FORBIDDEN. Therefore mark EVERY step accurately with `requires_open_business` and `is_noisy`.\n"
-        "Return ONLY a single JSON object ordered from highest to lowest priority:\n"
-        '{"steps": [{"source_todo": "<exact summary>", "title": "<short 20-45m step title>", '
-        '"duration_minutes": 30, "load_contribution": 10, '
-        '"requires_open_business": false, "is_noisy": false, '
-        '"checklist": ["<step 1>", "<step 2>"]}]}'
+        "Priority order is high->low: 2 steps for [PRIO: HOCH]/[PRIO: MITTEL], <=1 brief step for [PRIO: NIEDRIG].\n"
+        "Sunday rule (Germany): shops/Baumarkt/TÜV/offices/doctors/hotlines are closed (requires_open_business=true) "
+        "and noisy tools/garden machinery (schleifen, bohren, sägen, mähen) are forbidden (is_noisy=true). Keep quiet indoor prep separate.\n"
+        'Return ONLY JSON: {"steps":[{"source_todo":"exact summary","title":"short step","duration_minutes":30,'
+        '"load_contribution":10,"requires_open_business":false,"is_noisy":false,"checklist":["step1","step2"]}]}'
     )
 
     sorted_items = sort_project_items_by_priority(project_items)
@@ -1199,18 +1251,18 @@ def build_project_breakdown_prompt(
     lines = []
     for idx, item in enumerate(sorted_items[:25], start=1):
         summary = str(item.get("summary") or "").strip()
-        desc = str(item.get("description") or "").strip()
+        raw_desc = str(item.get("description") or "").strip()
+        # Strip redundant priority/status metadata already encoded in [PRIO: ...]
+        cleaned_desc = re.sub(r"(?:Prio|Priority|Status)\s*:[^|\n]+(?:\|\s*)?", "", raw_desc, flags=re.IGNORECASE).strip(" |-\n")
         due = str(item.get("due") or "").strip()
         rank, _ = _resolve_item_priority(item)
         prio_tag = f"[{prio_badges.get(rank, 'PRIO: NORMAL')}] "
-        due_note = f" | Fällig: {due[:10]}" if due else ""
-        desc_note = f" — Details: {desc[:420]}" if desc else ""
+        due_note = f" | Due:{due[:10]}" if due else ""
+        desc_note = f" — {cleaned_desc[:220]}" if cleaned_desc else ""
         lines.append(f"{idx}. {prio_tag}{summary}{due_note}{desc_note}")
 
     user_prompt = (
-        "Decompose each open project/To-Do below into concrete small 20-45 min steps ordered strictly by priority. "
-        "Whenever technical/practical context is given after 'Details:', incorporate those specific materials, tools, circuits, or specs into the step titles and checklists "
-        "(keep planning/measuring/quiet indoor prep separate from shopping/TÜV/calls or noisy work so calm Sundays can still get quiet prep steps):\n\n"
+        "Decompose open To-Dos into priority-ordered 20-45m steps (use details after `—` when given):\n"
         + "\n".join(lines)
     )
     return system_prompt, user_prompt

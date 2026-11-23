@@ -118,8 +118,8 @@ async def test_coordinator_caching_todo_dedup_and_reactions() -> None:
     coord = MentalLoadCoordinator(hass, entry, llm_client=mock_llm)
     await coord.async_config_entry_first_refresh()
 
-    # 2 days analyzed on first run
-    assert mock_llm.async_analyze_day.call_count == 2
+    # Only today has calendar events; tomorrow is empty and uses 0-token fast_empty_day path
+    assert mock_llm.async_analyze_day.call_count == 1
     assert coord.data[today.isoformat()].score == 88
 
     # Todo item pushed once for today
@@ -136,7 +136,7 @@ async def test_coordinator_caching_todo_dedup_and_reactions() -> None:
 
     # Second refresh with unchanged calendar must hit SHA-256 cache (no extra LLM calls, no duplicate todo/notifications)
     await coord.async_refresh()
-    assert mock_llm.async_analyze_day.call_count == 2
+    assert mock_llm.async_analyze_day.call_count == 1
     assert coord.data[today.isoformat()].cached is True
     assert len([c for c in hass.services.calls if c[0] == "todo" and c[1] == "add_item"]) == 1
     assert len([e for e in hass.bus.events if e[0] == EVENT_THRESHOLD_EXCEEDED]) == 1
@@ -281,11 +281,17 @@ async def test_multiday_load_balancing_and_dynamic_completion_relief() -> None:
             "calendar.google": {
                 "events": [
                     {
+                        "uid": "today_busy",
+                        "summary": "Ganztägiger Workshop",
+                        "start": f"{today.isoformat()}T09:00:00+01:00",
+                        "end": f"{today.isoformat()}T17:00:00+01:00",
+                    },
+                    {
                         "uid": "osteo_1",
                         "summary": "Osteopathie",
                         "start": f"{wednesday.isoformat()}T10:00:00+01:00",
                         "end": f"{wednesday.isoformat()}T11:00:00+01:00",
-                    }
+                    },
                 ]
             }
         },
@@ -384,9 +390,9 @@ async def test_30_day_horizon_major_event_7_to_14_day_lead_and_empty_fast_path()
     coord = MentalLoadCoordinator(hass, entry, llm_client=mock_llm)
     await coord.async_config_entry_first_refresh()
 
-    # 30 days generated, yet LLM called only for today, tomorrow, and major_day (3 calls instead of 30!)
+    # 30 days generated, yet LLM called only for major_day (1 call instead of 30; empty days incl. today/tomorrow cost 0 tokens)
     assert len(coord.data) == 30
-    assert mock_llm.async_analyze_day.call_count == 3
+    assert mock_llm.async_analyze_day.call_count == 1
 
     # Major event gift task moved into the 7..14 days before window (days 0..5 before major_day)
     placed_days = [
@@ -664,3 +670,30 @@ async def test_children_calendar_fetching_and_tagging() -> None:
     assert "calendar.stundenplan" in cal_calls[0][2]["entity_id"]
     today_tasks = coord.data[today.isoformat()].hidden_tasks
     assert any("Schwimmen" in t.title and t.category == "packing" for t in today_tasks)
+
+
+def test_fingerprint_stability_against_weather_and_energy_jitter() -> None:
+    hass = FakeHass()
+    entry = ConfigEntry(
+        entry_id="fp_entry",
+        data={CONF_CALENDARS: ["calendar.google"], CONF_HORIZON_DAYS: 5, CONF_PROVIDER: PROVIDER_HEURISTIC},
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    cfg = coord.merged_config
+
+    ctx_a = {"weather": "cloudy, 14.2°", "energy_sensor": "62 %"}
+    ctx_b = {"weather": "cloudy, 14.9°", "energy_sensor": "64 %"}
+    ctx_c = {"weather": "rainy, 8.0°", "energy_sensor": "20 %"}
+
+    # Offset <= 1 (include_live_context=True): temperature jitter & small energy drift keep same fingerprint
+    assert coord._compute_day_fingerprint("2026-11-23", [], ctx_a, cfg, include_live_context=True) == coord._compute_day_fingerprint(
+        "2026-11-23", [], ctx_b, cfg, include_live_context=True
+    )
+    # Major weather condition change or energy bucket drop DOES invalidate offset <= 1
+    assert coord._compute_day_fingerprint("2026-11-23", [], ctx_a, cfg, include_live_context=True) != coord._compute_day_fingerprint(
+        "2026-11-23", [], ctx_c, cfg, include_live_context=True
+    )
+    # Offset >= 2 (include_live_context=False): even dramatic weather/energy changes NEVER invalidate future day cache
+    assert coord._compute_day_fingerprint("2026-11-26", [], ctx_a, cfg, include_live_context=False) == coord._compute_day_fingerprint(
+        "2026-11-26", [], ctx_c, cfg, include_live_context=False
+    )

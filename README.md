@@ -41,7 +41,7 @@ In Home Assistant wählst du dann als Provider **Antigravity CLI (agy – kein A
   2. Soziale Batterie & persönliches Profil
   3. Ortswechsel & Mobilität
   4. Live-HA-Kontext (`todo.*`-Listen, Schlaf-/Energie-Sensoren, `weather.*`)
-  5. Gelerntes Feedback-Gedächtnis (`mental_load.submit_feedback`)
+  5. Gelerntes Feedback-Gedächtnis (`mental_load.submit_feedback`) 
 - **To-Do-Sync & Aktive Reaktionen:**
   - Optionaler deduplizierter Push aller erkannten Kopf-Aufgaben in eine `todo.*`-Liste.
   - Schwellenwert-Aktionen (`mental_load_threshold_exceeded` Event, `notify.*`, Szenen/Skripte/Helfer).

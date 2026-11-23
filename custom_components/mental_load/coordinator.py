@@ -224,11 +224,19 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self._project_steps = await self._async_get_project_steps(ha_context, config)
 
         results: dict[str, DayLoadAnalysis] = {}
+        uncached_days: list[tuple[datetime.date, str, list[CalendarEventInput], str, bool]] = []
         for offset in range(horizon):
             day_date = today + datetime.timedelta(days=offset)
             day_str = day_date.isoformat()
             day_events = events_by_day.get(day_str, [])
-            fingerprint = self._compute_day_fingerprint(day_str, day_events, ha_context, config)
+            include_live = offset <= 1
+            fingerprint = self._compute_day_fingerprint(
+                day_str,
+                day_events,
+                ha_context,
+                config,
+                include_live_context=include_live,
+            )
 
             cached_entry = self._cache.get(day_str)
             if (
@@ -241,7 +249,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                 results[day_str] = analysis
                 continue
 
-            if not day_events and offset > 1:
+            if not day_events:
                 analysis = analyze_day_heuristic(
                     target_date=day_date,
                     events=[],
@@ -250,19 +258,61 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                     feedback_history=self.feedback_history,
                     provider_label="fast_empty_day",
                 )
+                self._cache[day_str] = {
+                    "fingerprint": fingerprint,
+                    "analysis": analysis.to_dict(),
+                }
+                results[day_str] = analysis
             else:
-                analysis = await self.llm_client.async_analyze_day(
-                    target_date=day_date,
-                    events=day_events,
-                    ha_context=ha_context,
-                    config=config,
-                    feedback_history=self.feedback_history,
-                )
-            self._cache[day_str] = {
-                "fingerprint": fingerprint,
-                "analysis": analysis.to_dict(),
-            }
-            results[day_str] = analysis
+                uncached_days.append((day_date, day_str, day_events, fingerprint, include_live))
+
+        if uncached_days:
+            supports_batch = hasattr(type(self.llm_client), "async_analyze_days_batch") or (
+                isinstance(getattr(self.llm_client, "__dict__", None), dict)
+                and "async_analyze_days_batch" in self.llm_client.__dict__
+            )
+            if supports_batch:
+                batch_size = 7
+                for idx in range(0, len(uncached_days), batch_size):
+                    chunk = uncached_days[idx : idx + batch_size]
+                    batch_input = [
+                        (d_date, d_events, ha_context, inc_live)
+                        for d_date, _, d_events, _, inc_live in chunk
+                    ]
+                    batch_results = await self.llm_client.async_analyze_days_batch(
+                        batch_input,
+                        config,
+                        self.feedback_history,
+                    )
+                    for d_date, d_str, d_events, fp, _ in chunk:
+                        analysis = batch_results.get(d_str)
+                        if analysis is None:
+                            analysis = await self.llm_client.async_analyze_day(
+                                target_date=d_date,
+                                events=d_events,
+                                ha_context=ha_context,
+                                config=config,
+                                feedback_history=self.feedback_history,
+                            )
+                        self._cache[d_str] = {
+                            "fingerprint": fp,
+                            "analysis": analysis.to_dict(),
+                        }
+                        results[d_str] = analysis
+            else:
+                for d_date, d_str, d_events, fp, _ in uncached_days:
+                    analysis = await self.llm_client.async_analyze_day(
+                        target_date=d_date,
+                        events=d_events,
+                        ha_context=ha_context,
+                        config=config,
+                        feedback_history=self.feedback_history,
+                    )
+                    self._cache[d_str] = {
+                        "fingerprint": fp,
+                        "analysis": analysis.to_dict(),
+                    }
+                    results[d_str] = analysis
 
         # Prune stale cache entries older than yesterday
         cutoff = (today - datetime.timedelta(days=1)).isoformat()
@@ -311,20 +361,40 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         )
         return results
 
+    @staticmethod
+    def _quantize_ha_context_for_fingerprint(
+        ha_context: dict[str, Any],
+        include_live_context: bool,
+    ) -> dict[str, str]:
+        """Stabilize cache keys: ignore weather/energy beyond +1 day and bucket volatile decimals."""
+        if not include_live_context:
+            return {}
+        raw_weather = str(ha_context.get("weather") or "").strip()
+        weather_cond = raw_weather.split(",", 1)[0].strip().lower() if raw_weather else ""
+
+        raw_energy = str(ha_context.get("energy_sensor") or "").strip()
+        energy_bucket = ""
+        if raw_energy:
+            m_energy = re.search(r"(\d+(?:\.\d+)?)", raw_energy)
+            energy_bucket = f"{round(float(m_energy.group(1)) / 10) * 10}%" if m_energy else raw_energy
+
+        return {
+            "energy_sensor": energy_bucket,
+            "weather": weather_cond,
+        }
+
     def _compute_day_fingerprint(
         self,
         day_str: str,
         events: list[CalendarEventInput],
         ha_context: dict[str, Any],
         config: dict[str, Any],
+        include_live_context: bool = True,
     ) -> str:
         """Compute deterministic SHA-256 hash to skip redundant LLM calls."""
-        # Keep volatile project todo backlog decoupled from per-day LLM cache so
-        # baseline load and project sub-tasks recompute locally in milliseconds.
-        day_ha_context = {
-            "energy_sensor": ha_context.get("energy_sensor", ""),
-            "weather": ha_context.get("weather", ""),
-        }
+        # Keep volatile project todo backlog decoupled from per-day LLM cache, and
+        # only include quantized live weather/energy on today & tomorrow (offset <= 1).
+        day_ha_context = self._quantize_ha_context_for_fingerprint(ha_context, include_live_context)
         payload = {
             "date": day_str,
             "events": [e.to_dict() for e in sorted(events, key=lambda x: (x.start.isoformat(), x.summary))],
