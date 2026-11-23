@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.0] — 2026-11-23
+
+### Added
+- **Smart Lead-Time & Multi-Day Load-Balancing:** Preparation tasks with advance lead time (e.g. withdrawing cash, buying gifts, checking schedules, packing bags for early appointments) are automatically scheduled onto earlier days — the evening before (`19:30`) for packing/morning prep, or the calmest lowest-load day `1–4` days ahead (`17:30`) for errands.
+- **Bidirectional Appointment Linking:** Advance tasks show `🔗 Für <Datum>: <Termin>` (clickable in the Lovelace card to jump straight to the appointment day), while appointment days list `🔗 Vorab an Vortagen eingeplant` with live completion status and jump links back to the prep day.
+- **Dynamic Score Relief on Completion:** Checking off preparation tasks dynamically lowers the effective Mental Load score on both the prep day and the linked appointment day in real time without extra AI calls.
+
+---
+
 ## [1.3.0] — 2026-11-23
 
 ### Added

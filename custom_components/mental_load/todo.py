@@ -61,6 +61,9 @@ class MentalLoadTodoListEntity(CoordinatorEntity[MentalLoadCoordinator], TodoLis
                             else TodoItemStatus.NEEDS_ACTION
                         )
                         parent_suffix = f" ({task.parent_event_summary})" if task.parent_event_summary else ""
+                        if task.parent_event_date and task.parent_event_date != task.scheduled_date:
+                            p_short = f"{task.parent_event_date[8:10]}.{task.parent_event_date[5:7]}."
+                            parent_suffix = f" [🔗 für {p_short}: {task.parent_event_summary}]"
                         items.append(
                             TodoItem(
                                 uid=uid,

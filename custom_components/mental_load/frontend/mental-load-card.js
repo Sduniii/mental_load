@@ -168,7 +168,11 @@ class MentalLoadCard extends HTMLElement {
     const level = activeDay.level || "low";
     const breakdown = activeDay.factor_breakdown || {};
     const hiddenTasks = activeDay.hidden_tasks || [];
+    const linkedPrepTasks = activeDay.linked_prep_tasks || [];
+    const reliefPoints = Number(activeDay.relief_points) || 0;
     const recommendations = activeDay.recommendations || [];
+
+    const fmtShortDate = (iso) => (iso && iso.length >= 10 ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.` : iso || "");
 
     const factorLabels = [
       ["pacing_context", "Taktung & Wechsel"],
@@ -232,7 +236,18 @@ class MentalLoadCard extends HTMLElement {
         }
         .task-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
         .task-title { font-weight: 700; font-size: 0.9rem; }
-        .task-meta { font-size: 0.76rem; color: var(--secondary-text-color); margin-bottom: 6px; }
+        .task-meta { font-size: 0.76rem; color: var(--secondary-text-color); margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+        .link-pill {
+          display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 99px;
+          background: rgba(59,130,246,0.16); color: var(--primary-color); font-weight: 600; font-size: 0.74rem;
+          cursor: pointer; border: 0;
+        }
+        .link-pill:hover { background: rgba(59,130,246,0.28); }
+        .relief-pill {
+          display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 99px;
+          background: rgba(34,197,94,0.16); color: #22c55e; font-size: 0.75rem; font-weight: 700;
+        }
+        .linked-box { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.28); }
         .checklist { display: grid; gap: 5px; }
         .check-row {
           display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 0.84rem;
@@ -274,6 +289,7 @@ class MentalLoadCard extends HTMLElement {
           <div class="hero-text">
             <div class="badge-title">${activeDay.badge_summary || "Keine Daten"}</div>
             <div class="muted">${activeDay.reasoning || ""}</div>
+            ${reliefPoints > 0 ? `<div class="relief-pill">✅ -${reliefPoints}% durch erledigte Vorbereitung</div>` : ""}
           </div>
         </div>
 
@@ -317,13 +333,17 @@ class MentalLoadCard extends HTMLElement {
             const steps = (t.checklist && t.checklist.length) ? t.checklist : [t.title];
             const startStr = t.start ? t.start.slice(11, 16) : "";
             const endStr = t.end ? t.end.slice(11, 16) : "";
+            const isAdvance = t.parent_event_date && t.parent_event_date !== (t.scheduled_date || activeDay.date);
             return `
               <div class="task-card">
                 <div class="task-top">
                   <div class="task-title">${t.title}</div>
                   <span class="pill">${startStr}${endStr ? `–${endStr}` : ""} · +${t.load_contribution}%</span>
                 </div>
-                ${t.parent_event_summary ? `<div class="task-meta">Termin: ${t.parent_event_summary}</div>` : ""}
+                <div class="task-meta">
+                  ${t.parent_event_summary ? `<span>Termin: ${t.parent_event_summary}</span>` : ""}
+                  ${isAdvance ? `<button class="link-pill jump-day" data-jump="${t.parent_event_date}">🔗 Für ${fmtShortDate(t.parent_event_date)} →</button>` : ""}
+                </div>
                 <div class="checklist">
                   ${steps.map((step, idx) => {
                     const itemUid = `${t.uid}:step:${idx}`;
@@ -340,6 +360,42 @@ class MentalLoadCard extends HTMLElement {
             `;
           }).join("")}
         </div>
+
+        ${linkedPrepTasks.length ? `
+          <div class="linked-box">
+            <div class="section-head" style="margin-top:0;">
+              <span>🔗 Vorab an Vortagen eingeplant (${linkedPrepTasks.length})</span>
+            </div>
+            <div class="tasks-grid">
+              ${linkedPrepTasks.map((lp) => {
+                const steps = (lp.checklist && lp.checklist.length) ? lp.checklist : [lp.title];
+                const doneCnt = steps.filter((_, idx) => isCompleted(`${lp.uid}:step:${idx}`)).length;
+                const allDone = doneCnt === steps.length;
+                return `
+                  <div class="task-card" style="border-left-color:${allDone ? "#22c55e" : "#3b82f6"}">
+                    <div class="task-top">
+                      <div class="task-title">${allDone ? "✅" : "⏳"} ${lp.title}</div>
+                      <button class="link-pill jump-day" data-jump="${lp.scheduled_date}">Am ${fmtShortDate(lp.scheduled_date)} (${doneCnt}/${steps.length}) →</button>
+                    </div>
+                    <div class="task-meta"><span>Für Termin: ${lp.parent_event_summary}</span></div>
+                    <div class="checklist">
+                      ${steps.map((step, idx) => {
+                        const itemUid = `${lp.uid}:step:${idx}`;
+                        const checked = isCompleted(itemUid);
+                        return `
+                          <label class="check-row ${checked ? "done" : ""}">
+                            <input type="checkbox" data-uid="${itemUid}" ${checked ? "checked" : ""} />
+                            <span>${step}</span>
+                          </label>
+                        `;
+                      }).join("")}
+                    </div>
+                  </div>
+                `;
+              }).join("")}
+            </div>
+          </div>
+        ` : ""}
 
         ${(this._config.show_recommendations && recommendations.length) ? `
           <div class="recs">
@@ -359,10 +415,13 @@ class MentalLoadCard extends HTMLElement {
       </ha-card>
     `;
 
-    this.shadowRoot.querySelectorAll(".day-cell").forEach((el) => {
+    this.shadowRoot.querySelectorAll(".day-cell, .jump-day").forEach((el) => {
       el.addEventListener("click", () => {
-        this._selectedDate = el.getAttribute("data-date");
-        this._render();
+        const target = el.getAttribute("data-date") || el.getAttribute("data-jump");
+        if (target) {
+          this._selectedDate = target;
+          this._render();
+        }
       });
     });
 

@@ -78,6 +78,10 @@ class HiddenTask:
     end: datetime.datetime
     load_contribution: int = 10
     checklist: list[str] = field(default_factory=list)
+    parent_event_date: str = ""
+    scheduled_date: str = ""
+    lead_days: int = 0
+    placement_mode: str = "same_day"  # "same_day" | "previous_evening" | "load_balanced"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -89,19 +93,29 @@ class HiddenTask:
             "end": self.end.isoformat(),
             "load_contribution": self.load_contribution,
             "checklist": list(self.checklist),
+            "parent_event_date": self.parent_event_date or self.start.date().isoformat(),
+            "scheduled_date": self.scheduled_date or self.start.date().isoformat(),
+            "lead_days": self.lead_days,
+            "placement_mode": self.placement_mode,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HiddenTask:
+        start_dt = datetime.datetime.fromisoformat(str(data["start"]))
+        default_d = start_dt.date().isoformat()
         return cls(
             uid=str(data["uid"]),
             parent_event_summary=str(data.get("parent_event_summary", "")),
             title=str(data.get("title", "")),
             category=str(data.get("category", "prep")),
-            start=datetime.datetime.fromisoformat(str(data["start"])),
+            start=start_dt,
             end=datetime.datetime.fromisoformat(str(data["end"])),
             load_contribution=int(data.get("load_contribution", 10)),
             checklist=[str(x) for x in data.get("checklist", [])],
+            parent_event_date=str(data.get("parent_event_date") or default_d),
+            scheduled_date=str(data.get("scheduled_date") or default_d),
+            lead_days=int(data.get("lead_days", 0)),
+            placement_mode=str(data.get("placement_mode", "same_day")),
         )
 
 
@@ -120,6 +134,9 @@ class DayLoadAnalysis:
     top_stressor: str = ""
     provider_used: str = ""
     cached: bool = False
+    base_score: int = 0
+    relief_points: int = 0
+    linked_prep_tasks: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -134,6 +151,9 @@ class DayLoadAnalysis:
             "top_stressor": self.top_stressor,
             "provider_used": self.provider_used,
             "cached": self.cached,
+            "base_score": self.base_score or self.score,
+            "relief_points": self.relief_points,
+            "linked_prep_tasks": [dict(item) for item in self.linked_prep_tasks],
         }
 
     @classmethod
@@ -142,9 +162,10 @@ class DayLoadAnalysis:
             factor: int(data.get("factor_breakdown", {}).get(factor, 0))
             for factor in ALL_FACTORS
         }
+        score_val = int(data.get("score", 0))
         return cls(
             date=datetime.date.fromisoformat(str(data["date"])),
-            score=int(data.get("score", 0)),
+            score=score_val,
             level=str(data.get("level", LEVEL_LOW)),
             badge_summary=str(data.get("badge_summary", "")),
             reasoning=str(data.get("reasoning", "")),
@@ -157,6 +178,9 @@ class DayLoadAnalysis:
             top_stressor=str(data.get("top_stressor", "")),
             provider_used=str(data.get("provider_used", "")),
             cached=bool(data.get("cached", False)),
+            base_score=int(data.get("base_score", score_val)),
+            relief_points=int(data.get("relief_points", 0)),
+            linked_prep_tasks=[dict(item) for item in data.get("linked_prep_tasks", [])],
         )
 
 

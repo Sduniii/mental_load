@@ -43,9 +43,18 @@ def _format_day_description(day: DayLoadAnalysis) -> str:
         lines.extend(["", "🧠 Unsichtbare Kopf-Aufgaben:"])
         for task in day.hidden_tasks:
             time_range = f"{task.start.strftime('%H:%M')}-{task.end.strftime('%H:%M')}"
-            lines.append(f"• [{time_range}] {task.title} (+{task.load_contribution}%)")
+            link_tag = ""
+            if task.parent_event_date and task.parent_event_date != task.scheduled_date:
+                link_tag = f" [🔗 für {task.parent_event_date[8:10]}.{task.parent_event_date[5:7]}.]"
+            lines.append(f"• [{time_range}] {task.title}{link_tag} (+{task.load_contribution}%)")
             for step in task.checklist:
                 lines.append(f"    - [ ] {step}")
+    if day.linked_prep_tasks:
+        lines.extend(["", "🔗 Vorab an Vortagen eingeplant:"])
+        for linked in day.linked_prep_tasks:
+            sd = str(linked.get("scheduled_date", ""))
+            sd_short = f"{sd[8:10]}.{sd[5:7]}." if len(sd) == 10 else sd
+            lines.append(f"• {linked.get('title')} (eingeplant am {sd_short} für '{linked.get('parent_event_summary')}')")
     if day.recommendations:
         lines.extend(["", "💡 Empfehlungen:"])
         for rec in day.recommendations:
@@ -121,15 +130,18 @@ class MentalLoadCalendarEntity(CoordinatorEntity[MentalLoadCoordinator], Calenda
                 )
             )
 
-            # 2. Timed invisible task blocks around original appointments
+            # 2. Timed invisible task blocks around original appointments (or on earlier prep days)
             if show_blocks:
                 for task in day.hidden_tasks:
                     if task.end >= start_date and task.start <= end_date:
+                        link_suffix = ""
+                        if task.parent_event_date and task.parent_event_date != task.scheduled_date:
+                            link_suffix = f" [🔗 für {task.parent_event_date[8:10]}.{task.parent_event_date[5:7]}.]"
                         events.append(
                             CalendarEvent(
                                 start=task.start,
                                 end=task.end,
-                                summary=f"{task.title} (+{task.load_contribution}%)",
+                                summary=f"{task.title}{link_suffix} (+{task.load_contribution}%)",
                                 description=_format_hidden_task_description(task),
                             )
                         )

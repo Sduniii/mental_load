@@ -2,6 +2,12 @@
 
 Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Modell deiner Wahl, berechne den täglichen **Mental Load (0–100%)**, mache **unsichtbare Kopf-Aufgaben** direkt in `calendar.mental_load` sichtbar und löse aktive Smart-Home-Reaktionen aus.
 
+## Neu in v1.4.0
+
+- 📆 **Vorlauf-Planung & Load-Balancing:** Besorgungen (Bargeld, Geschenke, Dokumente) und Vorabend-Packen werden automatisch auf ruhige Vortage (z. B. deinen 3%-Tag) vorgezogen statt 20 Min vor Termin zu erscheinen.
+- 🔗 **Bidirektionale Verknüpfung:** Aufgaben zeigen ihren Ziel-Termin (und umgekehrt) — inklusive Klick-Sprung zwischen Vorlauf-Tag und Termin-Tag in der Card.
+- 📉 **Live-Entlastung:** Abgehakte Vorbereitungen senken den Mental Load am Termin-Tag sofort in Echtzeit.
+
 ## Neu in v1.3.0
 
 - ✅ **Echte abhakbare To-Dos (`todo.mental_load_aufgaben`):** Alle Checklisten-Schritte sind direkt im HA To-Do-Tab und in der Dashboard-Card abhakbar.

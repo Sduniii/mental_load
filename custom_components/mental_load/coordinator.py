@@ -52,8 +52,8 @@ from .const import (
     STORAGE_VERSION,
 )
 from .llm_providers import LLMProviderClient
-from .models import CalendarEventInput, DayLoadAnalysis, FeedbackEntry
-from .prompt_builder import get_factor_weights
+from .models import CalendarEventInput, DayLoadAnalysis, FeedbackEntry, score_to_level
+from .prompt_builder import _format_badge_summary, get_factor_weights
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,6 +121,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self.ical_token: str = secrets.token_urlsafe(24)
         self._notified_thresholds: dict[str, str] = {}
         self._force_refresh = False
+        self._raw_analyses: dict[str, DayLoadAnalysis] = {}
 
     @property
     def merged_config(self) -> dict[str, Any]:
@@ -224,6 +225,9 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         cutoff = (today - datetime.timedelta(days=1)).isoformat()
         for stale_key in [k for k in self._cache if k < cutoff]:
             self._cache.pop(stale_key, None)
+
+        self._raw_analyses = results
+        results = self._rebalance_and_score_horizon(results, today, tz)
 
         if config.get(CONF_AUTO_PUSH_TODO) and config.get(CONF_TARGET_TODO_ENTITY):
             await self.async_push_hidden_tasks_to_todo(
@@ -470,6 +474,141 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             await self._async_save_state()
         return pushed_count
 
+    def _task_completion_ratio(self, task_uid: str, checklist: list[str]) -> float:
+        """Return 0.0..1.0 ratio of completed steps for a hidden task."""
+        step_count = len(checklist) if checklist else 1
+        done = sum(
+            1
+            for idx in range(step_count)
+            if make_checklist_item_uid(task_uid, idx) in self.completed_item_uids
+        )
+        return done / step_count
+
+    def _rebalance_and_score_horizon(
+        self,
+        raw_results: dict[str, DayLoadAnalysis],
+        today: datetime.date,
+        tz: datetime.tzinfo | None = None,
+    ) -> dict[str, DayLoadAnalysis]:
+        """Move advance prep/errand tasks onto earlier days (evening before or lowest-load day) and link bidirectionally."""
+        rebalanced: dict[str, DayLoadAnalysis] = {
+            k: DayLoadAnalysis.from_dict(v.to_dict()) for k, v in raw_results.items()
+        }
+        for day in rebalanced.values():
+            day.base_score = day.base_score or day.score
+            day.linked_prep_tasks = []
+
+        for day_str in sorted(rebalanced.keys()):
+            source_day = rebalanced[day_str]
+            if source_day.date <= today:
+                continue
+
+            kept_tasks = []
+            for task in source_day.hidden_tasks:
+                if task.category in ("travel", "followup") or task.placement_mode == "same_day":
+                    kept_tasks.append(task)
+                    continue
+
+                target_day: DayLoadAnalysis | None = None
+                target_hour = 17
+                target_minute = 30
+
+                if task.placement_mode == "previous_evening":
+                    prev_str = (source_day.date - datetime.timedelta(days=1)).isoformat()
+                    if prev_str in rebalanced and (source_day.date - datetime.timedelta(days=1)) >= today:
+                        target_day = rebalanced[prev_str]
+                        target_hour = 19
+                        target_minute = 30
+                elif task.placement_mode == "load_balanced":
+                    max_lead = max(1, min(4, task.lead_days or 3))
+                    candidates: list[DayLoadAnalysis] = []
+                    for back in range(1, max_lead + 1):
+                        cand_date = source_day.date - datetime.timedelta(days=back)
+                        if cand_date < today:
+                            continue
+                        cand = rebalanced.get(cand_date.isoformat())
+                        if cand is not None:
+                            candidates.append(cand)
+                    if candidates:
+                        # Pick the day with the lowest base_score (preferring earlier calm day on ties)
+                        target_day = min(candidates, key=lambda c: (c.base_score, c.date))
+                        target_hour = 17
+                        target_minute = 30
+
+                if target_day is None or target_day.date == source_day.date:
+                    kept_tasks.append(task)
+                    continue
+
+                dur = max(datetime.timedelta(minutes=15), task.end - task.start)
+                tzinfo = task.start.tzinfo or tz
+                new_start = datetime.datetime.combine(
+                    target_day.date,
+                    datetime.time(target_hour, target_minute),
+                    tzinfo=tzinfo,
+                )
+                task.parent_event_date = source_day.date.isoformat()
+                task.scheduled_date = target_day.date.isoformat()
+                task.lead_days = (source_day.date - target_day.date).days
+                task.start = new_start
+                task.end = new_start + dur
+                target_day.hidden_tasks.append(task)
+                target_day.hidden_tasks.sort(key=lambda t: t.start)
+
+                source_day.linked_prep_tasks.append(
+                    {
+                        "uid": task.uid,
+                        "title": task.title,
+                        "scheduled_date": target_day.date.isoformat(),
+                        "parent_event_date": source_day.date.isoformat(),
+                        "parent_event_summary": task.parent_event_summary,
+                        "load_contribution": task.load_contribution,
+                        "checklist": list(task.checklist),
+                        "placement_mode": task.placement_mode,
+                    }
+                )
+
+                # Shift gentle cognitive weight from appointment day to prep day
+                target_day.base_score = min(100, target_day.base_score + max(2, round(task.load_contribution * 0.4)))
+                source_day.base_score = max(0, source_day.base_score - max(1, round(task.load_contribution * 0.25)))
+
+            source_day.hidden_tasks = kept_tasks
+
+        return self._apply_dynamic_completion_relief(rebalanced)
+
+    def _apply_dynamic_completion_relief(
+        self,
+        horizon: dict[str, DayLoadAnalysis],
+    ) -> dict[str, DayLoadAnalysis]:
+        """Dynamically reduce daily Mental Load scores based on completed checklist items."""
+        language = str(self.merged_config.get("language", "de"))
+        for day in horizon.values():
+            base = day.base_score or day.score
+            day.base_score = base
+            relief = 0
+            for task in day.hidden_tasks:
+                ratio = self._task_completion_ratio(task.uid, task.checklist)
+                if ratio > 0:
+                    relief += round(task.load_contribution * 0.6 * ratio)
+            for linked in day.linked_prep_tasks:
+                ratio = self._task_completion_ratio(str(linked["uid"]), list(linked.get("checklist") or []))
+                if ratio > 0:
+                    relief += round(int(linked.get("load_contribution", 10)) * 0.5 * ratio)
+
+            day.relief_points = relief
+            day.score = max(0, min(100, base - relief))
+            day.level = score_to_level(day.score)
+            badge = _format_badge_summary(
+                score=day.score,
+                level=day.level,
+                hidden_count=len(day.hidden_tasks),
+                top_stressor=day.top_stressor,
+                language=language,
+            )
+            if relief > 0:
+                badge += f" [-{relief}%]"
+            day.badge_summary = badge
+        return horizon
+
     async def async_toggle_checklist_item(
         self,
         item_uid: str,
@@ -484,7 +623,18 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         else:
             self.completed_item_uids.discard(item_uid)
         await self._async_save_state()
-        if hasattr(self, "async_set_updated_data") and self.data is not None:
+
+        if self._raw_analyses:
+            updated = self._rebalance_and_score_horizon(
+                self._raw_analyses,
+                dt_util.now().date(),
+                dt_util.now().tzinfo,
+            )
+            self.data = updated
+            if hasattr(self, "async_set_updated_data"):
+                self.async_set_updated_data(updated)
+        elif hasattr(self, "async_set_updated_data") and self.data is not None:
+            self._apply_dynamic_completion_relief(self.data)
             self.async_set_updated_data(self.data)
         return new_done
 
@@ -546,13 +696,17 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                     f"Ausgelöst durch: {task.parent_event_summary}\n"
                     f"{checklist_lines}\n\n[ML-TASK-{task.uid}]"
                 ).strip()
+                summary_txt = f"{task.title} (+{task.load_contribution}%)"
+                if task.parent_event_date and task.parent_event_date != task.scheduled_date:
+                    p_short = f"{task.parent_event_date[8:10]}.{task.parent_event_date[5:7]}."
+                    summary_txt = f"{task.title} [🔗 für {p_short}] (+{task.load_contribution}%)"
                 try:
                     await self.hass.services.async_call(
                         "calendar",
                         "create_event",
                         {
                             "entity_id": target_cal,
-                            "summary": f"{task.title} (+{task.load_contribution}%)",
+                            "summary": summary_txt,
                             "start_date_time": task.start.isoformat(),
                             "end_date_time": task.end.isoformat(),
                             "description": desc,

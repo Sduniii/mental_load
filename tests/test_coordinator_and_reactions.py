@@ -190,3 +190,103 @@ async def test_toggle_checklist_and_external_calendar_sync_guard() -> None:
 
     # Second sync does not create duplicates
     assert await coord.async_sync_to_external_calendar("calendar.google_mental_load") == 0
+
+
+async def test_multiday_load_balancing_and_dynamic_completion_relief() -> None:
+    hass = FakeHass()
+    today = datetime.date(2026, 11, 23)
+    tuesday = today + datetime.timedelta(days=1)
+    wednesday = today + datetime.timedelta(days=2)
+    tz = datetime.timezone(datetime.timedelta(hours=1))
+
+    entry = ConfigEntry(
+        entry_id="lb_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google"],
+            CONF_HORIZON_DAYS: 3,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+        },
+    )
+
+    def _day_analysis(target_date: datetime.date, **kw: Any) -> DayLoadAnalysis:
+        if target_date == today:
+            return DayLoadAnalysis(
+                date=today, score=50, level="medium", badge_summary="🟡 50%",
+                reasoning="Normal", factor_breakdown={"pacing_context": 50, "social_battery": 50, "mobility": 50, "ha_context": 50, "hidden_work": 50},
+                base_score=50,
+            )
+        if target_date == tuesday:
+            return DayLoadAnalysis(
+                date=tuesday, score=3, level="low", badge_summary="🟢 3%",
+                reasoning="Frei", factor_breakdown={"pacing_context": 0, "social_battery": 0, "mobility": 0, "ha_context": 10, "hidden_work": 0},
+                base_score=3,
+            )
+        # Wednesday has an errand (Bargeld abheben) + morning packing task (09:00)
+        return DayLoadAnalysis(
+            date=wednesday,
+            score=45,
+            level="medium",
+            badge_summary="🟡 45%",
+            reasoning="Osteopathie",
+            factor_breakdown={"pacing_context": 40, "social_battery": 30, "mobility": 45, "ha_context": 30, "hidden_work": 70},
+            base_score=45,
+            hidden_tasks=[
+                HiddenTask(
+                    uid="errand_cash",
+                    parent_event_summary="Osteopathie",
+                    title="🧠 Vorbereitung: Bargeld abheben",
+                    category="prep",
+                    start=datetime.datetime.combine(wednesday, datetime.time(9, 0), tzinfo=tz),
+                    end=datetime.datetime.combine(wednesday, datetime.time(9, 20), tzinfo=tz),
+                    load_contribution=15,
+                    checklist=["50 EUR abheben", "Rezept mitnehmen"],
+                    parent_event_date=wednesday.isoformat(),
+                    scheduled_date=wednesday.isoformat(),
+                    lead_days=2,
+                    placement_mode="load_balanced",
+                ),
+                HiddenTask(
+                    uid="pack_bag",
+                    parent_event_summary="Osteopathie",
+                    title="🎒 Einpacken: Praxistasche",
+                    category="packing",
+                    start=datetime.datetime.combine(wednesday, datetime.time(9, 20), tzinfo=tz),
+                    end=datetime.datetime.combine(wednesday, datetime.time(9, 35), tzinfo=tz),
+                    load_contribution=10,
+                    checklist=["Handtuch einpacken"],
+                    parent_event_date=wednesday.isoformat(),
+                    scheduled_date=wednesday.isoformat(),
+                    lead_days=1,
+                    placement_mode="previous_evening",
+                ),
+            ],
+        )
+
+    hass.services.set_response("calendar", "get_events", {"calendar.google": {"events": []}})
+    mock_llm = AsyncMock()
+    mock_llm.async_analyze_day = AsyncMock(side_effect=_day_analysis)
+
+    coord = MentalLoadCoordinator(hass, entry, llm_client=mock_llm)
+    await coord.async_config_entry_first_refresh()
+
+    tue_day = coord.data[tuesday.isoformat()]
+    wed_day = coord.data[wednesday.isoformat()]
+
+    # Both advance tasks moved from Wednesday to calm Tuesday and linked bidirectionally
+    assert len(tue_day.hidden_tasks) == 2
+    assert len(wed_day.hidden_tasks) == 0
+    assert len(wed_day.linked_prep_tasks) == 2
+    assert all(t.parent_event_date == wednesday.isoformat() for t in tue_day.hidden_tasks)
+    assert tue_day.score > 3  # Calm Tuesday picked up light planning load
+    assert wed_day.score < 45  # Wednesday got initial offload relief
+
+    tue_before = tue_day.score
+    wed_before = wed_day.score
+
+    # Completing both steps of errand_cash dynamically lowers BOTH Tuesday and Wednesday scores
+    await coord.async_toggle_checklist_item("errand_cash:step:0", completed=True)
+    await coord.async_toggle_checklist_item("errand_cash:step:1", completed=True)
+
+    assert coord.data[tuesday.isoformat()].score < tue_before
+    assert coord.data[wednesday.isoformat()].score < wed_before
+    assert coord.data[wednesday.isoformat()].relief_points > 0

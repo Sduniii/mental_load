@@ -81,9 +81,13 @@ def build_ical_payload(coordinators: list[MentalLoadCoordinator]) -> str:
                     mark = "[x]" if make_checklist_item_uid(task.uid, idx) in completed else "[ ]"
                     checklist_lines.append(f"{mark} {step}")
                 task_desc = (
-                    f"Termin: {task.parent_event_summary}\n"
+                    f"Termin: {task.parent_event_summary} ({task.parent_event_date or task.scheduled_date})\n"
                     + "\n".join(checklist_lines)
                 ).strip()
+                ical_summary = f"{task.title} (+{task.load_contribution}%)"
+                if task.parent_event_date and task.parent_event_date != task.scheduled_date:
+                    p_short = f"{task.parent_event_date[8:10]}.{task.parent_event_date[5:7]}."
+                    ical_summary = f"{task.title} [🔗 für {p_short}] (+{task.load_contribution}%)"
                 lines.extend(
                     [
                         "BEGIN:VEVENT",
@@ -91,7 +95,7 @@ def build_ical_payload(coordinators: list[MentalLoadCoordinator]) -> str:
                         f"DTSTAMP:{now_stamp}",
                         f"DTSTART:{_format_ics_dt(task.start)}",
                         f"DTEND:{_format_ics_dt(task.end)}",
-                        f"SUMMARY:{_escape_ics(f'{task.title} (+{task.load_contribution}%)')}",
+                        f"SUMMARY:{_escape_ics(ical_summary)}",
                         f"DESCRIPTION:{_escape_ics(task_desc)}",
                         "END:VEVENT",
                     ]

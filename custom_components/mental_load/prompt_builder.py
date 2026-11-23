@@ -181,6 +181,8 @@ Return ONLY a single valid JSON object (no markdown fences, no prose outside JSO
       "parent_event_summary": "<exact summary of the matching calendar event>",
       "title": "<short actionable title of the invisible task>",
       "category": "<prep | travel | packing | followup | mental_note>",
+      "placement_mode": "<same_day | previous_evening | load_balanced>",
+      "lead_days": <integer 0-4 (0=same day, 1=previous evening for packing/morning prep, 1-4=load_balanced for errands like cash/gifts/docs)>,
       "offset_type": "<before | after>",
       "offset_minutes": <integer minutes before event start or after event end, e.g. 20>,
       "duration_minutes": <integer duration 5-60>,
@@ -325,6 +327,41 @@ def _format_task_title(raw_title: str, category: str) -> str:
     return f"{prefix}: {stripped}" if stripped else prefix
 
 
+def _infer_placement_metadata(
+    title: str,
+    category: str,
+    checklist: list[str],
+    start_dt: datetime.datetime,
+    raw_mode: Any = None,
+    raw_lead: Any = None,
+) -> tuple[str, int]:
+    """Classify whether a hidden task belongs on the same day, previous evening, or an earlier low-load day."""
+    if category in ("travel", "followup"):
+        return "same_day", 0
+
+    valid_modes = {"same_day", "previous_evening", "load_balanced"}
+    mode = str(raw_mode or "").strip().lower()
+    if mode in valid_modes:
+        lead = max(0, min(4, int(raw_lead if raw_lead is not None else (1 if mode == "previous_evening" else 2 if mode == "load_balanced" else 0))))
+        if mode != "same_day" and lead == 0:
+            lead = 1
+        return mode, lead
+
+    combined = f"{title} {' '.join(checklist)}".lower()
+    errand_keywords = (
+        "bargeld", "abheben", "geschenk", "kaufen", "besorgen",
+        "überweisung", "rezept", "karte", "ferien", "gegenprüfen",
+        "gift", "cash", "buy", "withdraw", "errand", "schedule",
+    )
+    if any(kw in combined for kw in errand_keywords):
+        return "load_balanced", 3
+
+    if category == "packing" or (category == "prep" and start_dt.hour < 12):
+        return "previous_evening", 1
+
+    return "same_day", 0
+
+
 def parse_llm_day_response(
     raw_text: str,
     target_date: datetime.date,
@@ -364,6 +401,14 @@ def parse_llm_day_response(
         start_dt, end_dt = _resolve_task_window(item, target_date, events, config, tzinfo)
         checklist = [str(c).strip() for c in (item.get("checklist") or []) if str(c).strip()]
         contribution = max(1, min(40, int(item.get("load_contribution", 10) or 10)))
+        placement_mode, lead_days = _infer_placement_metadata(
+            title=title,
+            category=category,
+            checklist=checklist,
+            start_dt=start_dt,
+            raw_mode=item.get("placement_mode"),
+            raw_lead=item.get("lead_days"),
+        )
         hidden_tasks.append(
             HiddenTask(
                 uid=_make_task_uid(target_date, parent_summary, title, category),
@@ -374,6 +419,10 @@ def parse_llm_day_response(
                 end=end_dt,
                 load_contribution=contribution,
                 checklist=checklist,
+                parent_event_date=target_date.isoformat(),
+                scheduled_date=target_date.isoformat(),
+                lead_days=lead_days,
+                placement_mode=placement_mode,
             )
         )
 
@@ -399,6 +448,7 @@ def parse_llm_day_response(
         top_stressor=top_stressor,
         provider_used=provider_used,
         cached=False,
+        base_score=score,
     )
 
 
@@ -598,6 +648,18 @@ def analyze_day_heuristic(
                 )
             )
 
+    for task in hidden_tasks:
+        task.parent_event_date = target_date.isoformat()
+        task.scheduled_date = target_date.isoformat()
+        mode, lead = _infer_placement_metadata(
+            title=task.title,
+            category=task.category,
+            checklist=task.checklist,
+            start_dt=task.start,
+        )
+        task.placement_mode = mode
+        task.lead_days = lead
+
     hidden_score = min(100, sum(t.load_contribution for t in hidden_tasks) + len(hidden_tasks) * 5)
 
     breakdown = {
@@ -677,4 +739,5 @@ def analyze_day_heuristic(
         top_stressor=top_stressor,
         provider_used=provider_label,
         cached=False,
+        base_score=score,
     )
