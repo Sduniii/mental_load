@@ -8,9 +8,22 @@ Eine HACS-kompatible Home-Assistant-Integration (`mental_load`), die Kalenderein
   - **Antigravity CLI (`agy`)**: Nutzt deine bestehende Antigravity-Session (`gemini-3.8-flash-medium`, `gemini-4-argon-medium`, `claude-sonnet-5-5-medium`, `claude-opus-5-5-high`, `gpt-oss-120b-medium`) – **kein separater API-Key nötig!** Läuft entweder direkt lokal über `agy --print` oder bei HAOS-VMs über die mitgelieferte Bridge `tools/agy_bridge_server.py`.
   - **Cloud & Lokal:** OpenAI (`gpt-4o-mini`, `gpt-4o`, ...), Anthropic (`claude-3-5-haiku-latest`, `claude-3-7-sonnet-latest`, ...), Mistral (`mistral-small-latest`, `mistral-large-latest`), Google Gemini (`gemini-2.0-flash`, ...), Ollama / Custom OpenAI-URLs (`http://localhost:11434/v1`), Home Assistant Conversation Agents sowie eine Offline-Heuristik als Fallback.
 
-## Antigravity CLI Bridge starten (für HAOS / Docker)
+## Antigravity CLI App direkt in Home Assistant betreiben (empfohlen)
 
-Wenn dein Home Assistant auf einer separaten VM (z. B. Home Assistant OS) läuft, starte die mitgelieferte Bridge auf dem Rechner, auf dem `agy` eingeloggt ist:
+Dieses Repository ist gleichzeitig ein **Home Assistant App-Repository** (`antigravity_bridge/`). Damit läuft `agy` dauerhaft direkt auf deiner Home-Assistant-Instanz:
+
+1. In Home Assistant unter **Einstellungen → Apps → App Store → ⋮ → Repositories** hinzufügen:
+   `https://github.com/Sduniii/mental_load`
+2. Die App **Antigravity CLI Bridge** installieren und starten.
+3. In der App-Oberfläche (**Seitenleiste → Antigravity AI** bzw. Web-UI öffnen) entweder über **Login starten** anmelden oder die bestehende Session vom PC direkt pushen:
+   ```bash
+   python3 tools/agy_bridge_server.py --push-session http://10.0.107.108:11435
+   ```
+4. In der Integration **Mental Load Analyzer** lautet die Standard-Bridge-URL dann `http://127.0.0.1:11435/v1` (Standardwert, wenn das Feld leer bleibt).
+
+### Alternative: Bridge auf externem Rechner starten
+
+Falls die Bridge auf einem separaten Rechner laufen soll:
 
 ```bash
 python3 tools/agy_bridge_server.py --host 0.0.0.0 --port 11435

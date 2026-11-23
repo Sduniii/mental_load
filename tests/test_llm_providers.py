@@ -251,3 +251,19 @@ async def test_antigravity_cli_subprocess_mode(monkeypatch: Any) -> None:
         "--print",
     ]
     assert len(result.hidden_tasks) == 1
+
+
+def test_bridge_session_bundle_roundtrip(tmp_path: Any) -> None:
+    from tools.agy_bridge_server import export_session_bundle, import_session_bundle
+
+    src_home = tmp_path / "src"
+    dst_home = tmp_path / "dst"
+    (src_home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+    (src_home / ".gemini" / "google_accounts.json").write_text('{"active":"test@example.com"}')
+    (src_home / ".gemini" / "antigravity-cli" / "jetski_state.pbtxt").write_text("token: abc")
+
+    bundle = export_session_bundle(src_home)
+    imported = import_session_bundle(bundle, dst_home)
+    assert ".gemini/google_accounts.json" in imported
+    assert ".gemini/antigravity-cli/jetski_state.pbtxt" in imported
+    assert (dst_home / ".gemini" / "google_accounts.json").read_text() == '{"active":"test@example.com"}'

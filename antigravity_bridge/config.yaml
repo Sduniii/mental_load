@@ -1,0 +1,26 @@
+name: "Antigravity CLI Bridge"
+version: "1.2.0"
+slug: "antigravity_bridge"
+description: "Runs Google Antigravity CLI (agy) directly on Home Assistant with an OpenAI-compatible API (/v1) and Ingress Web UI for login & session management."
+url: "https://github.com/Sduniii/mental_load"
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: services
+boot: auto
+ingress: true
+ingress_port: 11435
+panel_icon: "mdi:brain"
+panel_title: "Antigravity AI"
+host_network: false
+ports:
+  11435/tcp: 11435
+ports_description:
+  11435/tcp: "OpenAI-compatible Antigravity CLI Bridge API (/v1)"
+options:
+  default_model: "gemini-3.8-flash-medium"
+  auth_token: ""
+schema:
+  default_model: str
+  auth_token: "str?"

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "mental_load"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 URL_BASE = "/mental_load_card"
 JSMODULES = [
@@ -46,7 +46,7 @@ DEFAULT_MODELS: dict[str, str] = {
 }
 
 DEFAULT_BASE_URLS: dict[str, str] = {
-    PROVIDER_ANTIGRAVITY_CLI: "http://192.168.1.106:11435/v1",
+    PROVIDER_ANTIGRAVITY_CLI: "http://127.0.0.1:11435/v1",
     PROVIDER_OPENAI: "https://api.openai.com/v1",
     PROVIDER_ANTHROPIC: "https://api.anthropic.com/v1",
     PROVIDER_MISTRAL: "https://api.mistral.ai/v1",
