@@ -74,10 +74,55 @@ def is_anytype_task_done(raw_obj: dict[str, Any]) -> bool:
 
 
 def extract_task_due_date(raw_obj: dict[str, Any]) -> str | None:
-    """Extract ISO date (YYYY-MM-DD) from Anytype's due_date property if present."""
+    """Extract ISO date (YYYY-MM-DD) from Anytype's due_date when explicitly set beyond creation time."""
     props = raw_obj.get("properties") or {}
     due_val = _format_prop_value(_extract_prop(props, "due_date"))
-    return due_val[:10] if len(due_val) >= 10 else None
+    if len(due_val) < 10:
+        return None
+    created_val = _format_prop_value(_extract_prop(props, "created_date"))
+    if created_val and len(due_val) >= 16 and len(created_val) >= 16 and due_val[:16] == created_val[:16]:
+        return None
+    return due_val[:10]
+
+
+def extract_task_body_details(raw_obj: dict[str, Any]) -> str:
+    """Extract user-authored notes/details under '## Details' from Anytype markdown or block tree."""
+    task_name = str(raw_obj.get("name") or "").strip().lower()
+    raw_md = str(raw_obj.get("markdown") or "").strip()
+    lines_out: list[str] = []
+
+    if raw_md:
+        for raw_line in raw_md.splitlines():
+            line = raw_line.strip()
+            if not line or line in ("---", "***", "___"):
+                continue
+            if line.startswith("# "):
+                heading_text = line[2:].strip().lower()
+                if not task_name or heading_text == task_name:
+                    continue
+            if line.lower() in ("## details", "### details", "details"):
+                continue
+            # Clean Anytype object links like [Quigg Luftreiniger](anytype://...)
+            line = re.sub(r"\[([^\]]+)\]\(anytype://[^)]+\)", r"Projekt: \1", line)
+            lines_out.append(line)
+    else:
+        for blk in raw_obj.get("blocks") or []:
+            if not isinstance(blk, dict):
+                continue
+            btype = str(blk.get("type") or "").lower()
+            if btype in ("property", "divider", "dataview"):
+                continue
+            text = str(blk.get("text") or "").strip()
+            if not text:
+                continue
+            if btype.startswith("heading") and text.lower() in ("details", task_name):
+                continue
+            text = re.sub(r"\[([^\]]+)\]\(anytype://[^)]+\)", r"Projekt: \1", text)
+            lines_out.append(text)
+
+    combined = " / ".join(lines_out)
+    combined = re.sub(r"\s+", " ", combined).strip()
+    return combined[:450]
 
 
 def extract_task_metadata(raw_obj: dict[str, Any]) -> str:
@@ -101,8 +146,12 @@ def extract_task_metadata(raw_obj: dict[str, Any]) -> str:
     if desc_val:
         parts.append(desc_val[:400])
 
+    body_details = extract_task_body_details(raw_obj)
+    if body_details and body_details not in desc_val:
+        parts.append(f"Details: {body_details}")
+
     snippet = str(raw_obj.get("snippet") or "").strip()
-    if snippet:
+    if snippet and snippet not in body_details and snippet not in desc_val:
         parts.append(snippet[:400])
     return " | ".join(parts)
 
@@ -217,13 +266,31 @@ class HttpSyncBackend:
                 obj_id = str(row.get("id") or "").strip()
                 if not obj_id or not name:
                     continue
+                done = is_anytype_task_done(row)
+                enriched = row
+                if not done:
+                    try:
+                        obj_resp = self._request_json(
+                            "GET",
+                            f"{self.anytype_url}/v1/spaces/{space_id}/objects/{obj_id}",
+                            self.anytype_headers,
+                        )
+                        obj_data = obj_resp.get("object") or obj_resp.get("data") or obj_resp
+                        if isinstance(obj_data, dict):
+                            enriched = dict(row)
+                            if obj_data.get("markdown"):
+                                enriched["markdown"] = obj_data["markdown"]
+                            if obj_data.get("blocks"):
+                                enriched["blocks"] = obj_data["blocks"]
+                    except Exception:  # noqa: BLE001
+                        enriched = row
                 tasks.append(
                     AnytypeTask(
                         object_id=obj_id,
                         name=name,
-                        done=is_anytype_task_done(row),
-                        details=extract_task_metadata(row),
-                        due_date=extract_task_due_date(row),
+                        done=done,
+                        details=extract_task_metadata(enriched),
+                        due_date=extract_task_due_date(enriched),
                     )
                 )
             pagination = payload.get("pagination") or {}

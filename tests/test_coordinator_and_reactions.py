@@ -557,6 +557,9 @@ async def test_project_priority_baseline_and_scheduling_order() -> None:
     assert extract_todo_priority("Task C", "Status: In Progress", reference_date=ref) == (2, "medium")
     assert extract_todo_priority("Task D", "Status: To Do", reference_date=ref) == (3, "normal")
     assert extract_todo_priority("Task E", "Prio: Niedrig | Status: To Do", reference_date=ref) == (4, "low")
+    # Explicit Prio: Niedrig overrides Status: In Progress and an older due date
+    assert extract_todo_priority("Luftreiniger", "Prio: Niedrig | Status: In Progress", due="2026-03-30", reference_date=ref) == (4, "low")
+    assert extract_todo_priority("OG: Fussboden", "Prio: Mittel | Status: In Progress", due="2026-04-02", reference_date=ref) == (2, "medium")
 
     cfg = {CONF_PROJECT_BASELINE_PER_ITEM: 2.0, CONF_PROJECT_BASELINE_CAP: 15}
     weighted_items = [

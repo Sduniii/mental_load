@@ -478,7 +478,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                         open_todo_details.append(
                             {
                                 "summary": summary,
-                                "description": clean_desc[:240],
+                                "description": clean_desc[:450],
                                 "due": due_raw[:10] if due_raw else "",
                                 "priority_rank": rank,
                                 "priority_label": label,

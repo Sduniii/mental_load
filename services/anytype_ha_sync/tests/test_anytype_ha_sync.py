@@ -7,6 +7,7 @@ from services.anytype_ha_sync.sync import (
     AnytypeTask,
     HaTodoItem,
     extract_anytype_id,
+    extract_task_body_details,
     extract_task_due_date,
     extract_task_metadata,
     format_ha_description,
@@ -88,6 +89,37 @@ def test_extract_task_metadata_includes_priority_status_and_due_date() -> None:
         ]
     }
     assert extract_task_metadata(raw_list_props) == "Prio: Niedrig | Status: To Do"
+
+    raw_with_details = {
+        "name": "Stall Strom Zuleitung",
+        "properties": {
+            "priority": ["Niedrig"],
+            "status": ["To Do"],
+            "created_date": "2026-03-30T09:25:13Z",
+            "due_date": "2026-03-30T09:25:13Z",
+        },
+        "markdown": "# Stall Strom Zuleitung   \n## Details    \n --- \nKabel 16m² hinter die Leitung legen. Dazu trennen und eine Sicherungskasten zwischen bauen.   \n",
+    }
+    assert extract_task_due_date(raw_with_details) is None
+    body_text = extract_task_body_details(raw_with_details)
+    assert body_text == "Kabel 16m² hinter die Leitung legen. Dazu trennen und eine Sicherungskasten zwischen bauen."
+    meta_details = extract_task_metadata(raw_with_details)
+    assert "Details: Kabel 16m² hinter die Leitung legen." in meta_details
+
+    raw_real_due = {
+        "name": "Poolrand mit Erde auffüllen",
+        "properties": {
+            "status": ["To Do"],
+            "created_date": "2026-11-23T11:44:01Z",
+            "due_date": "2027-04-30T22:00:00Z",
+        },
+        "blocks": [
+            {"type": "heading_2", "text": "Details"},
+            {"type": "paragraph", "text": "Kabel zusammenlöten oder crimpen"},
+        ],
+    }
+    assert extract_task_due_date(raw_real_due) == "2027-04-30"
+    assert "Details: Kabel zusammenlöten oder crimpen" in extract_task_metadata(raw_real_due)
 
 
 def test_sync_creates_idempotently_updates_and_bidirectional_complete() -> None:

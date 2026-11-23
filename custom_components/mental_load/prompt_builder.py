@@ -142,16 +142,6 @@ def extract_todo_priority(
     if any(tok in combined for tok in high_markers):
         return 1, "high"
 
-    if due:
-        due_text = str(due).strip()[:10]
-        try:
-            due_date = datetime.date.fromisoformat(due_text)
-            ref = reference_date or datetime.date.today()
-            if (due_date - ref).days <= 7:
-                return 1, "high"
-        except ValueError:
-            pass
-
     low_markers = (
         "prio: niedrig",
         "prio: low",
@@ -167,7 +157,7 @@ def extract_todo_priority(
     if any(tok in combined for tok in low_markers):
         return 4, "low"
 
-    medium_markers = (
+    medium_explicit_markers = (
         "prio: mittel",
         "prio: medium",
         "priority: mittel",
@@ -178,9 +168,21 @@ def extract_todo_priority(
         "!2",
         "[mittel]",
         "[medium]",
-        "status: in progress",
     )
-    if any(tok in combined for tok in medium_markers):
+    if any(tok in combined for tok in medium_explicit_markers):
+        return 2, "medium"
+
+    if due:
+        due_text = str(due).strip()[:10]
+        try:
+            due_date = datetime.date.fromisoformat(due_text)
+            ref = reference_date or datetime.date.today()
+            if (due_date - ref).days <= 7:
+                return 1, "high"
+        except ValueError:
+            pass
+
+    if "status: in progress" in combined:
         return 2, "medium"
 
     return 3, "normal"
@@ -997,11 +999,12 @@ def build_project_breakdown_prompt(
         rank, _ = _resolve_item_priority(item)
         prio_tag = f"[{prio_badges.get(rank, 'PRIO: NORMAL')}] "
         due_note = f" | Fällig: {due[:10]}" if due else ""
-        desc_note = f" — Details: {desc[:180]}" if desc else ""
+        desc_note = f" — Details: {desc[:420]}" if desc else ""
         lines.append(f"{idx}. {prio_tag}{summary}{due_note}{desc_note}")
 
     user_prompt = (
-        "Decompose each open project/To-Do below into concrete small 20-45 min steps ordered strictly by priority "
+        "Decompose each open project/To-Do below into concrete small 20-45 min steps ordered strictly by priority. "
+        "Whenever technical/practical context is given after 'Details:', incorporate those specific materials, tools, circuits, or specs into the step titles and checklists "
         "(keep planning/measuring/quiet indoor prep separate from shopping/TÜV/calls or noisy work so calm Sundays can still get quiet prep steps):\n\n"
         + "\n".join(lines)
     )
