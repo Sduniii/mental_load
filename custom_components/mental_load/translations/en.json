@@ -1,0 +1,110 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Select Calendars & Horizon",
+        "description": "Choose source calendars (e.g. Google Calendar). They are queried strictly read-only.",
+        "data": {
+          "calendars": "Source Calendars",
+          "horizon_days": "Forecast Horizon (Days)",
+          "update_interval": "Update Interval (Minutes)",
+          "language": "Output Language"
+        }
+      },
+      "llm": {
+        "title": "Connect AI Model & Provider",
+        "description": "Choose your preferred AI provider (OpenAI, Anthropic, Mistral, Google Gemini, Ollama, or HA Conversation).",
+        "data": {
+          "provider": "AI Provider",
+          "api_key": "API Key (if required)",
+          "model": "Model Name (empty = default)",
+          "base_url": "Custom Base URL (optional, e.g. Ollama http://localhost:11434/v1)",
+          "temperature": "Temperature"
+        }
+      },
+      "profile_and_reactions": {
+        "title": "Profile, Hidden Tasks & Reactions",
+        "description": "Configure your personal profile, optional live HA context sensors, and active threshold reactions.",
+        "data": {
+          "user_profile": "Personal Profile & Stress Rules",
+          "context_todos": "Factor 4: Include Open To-Do Lists",
+          "context_energy_sensor": "Factor 4: Sleep / Energy Sensor",
+          "context_weather": "Factor 4: Weather Entity",
+          "show_hidden_task_blocks": "Show invisible head-tasks as blocks in calendar.mental_load",
+          "auto_push_todo": "Automatically push hidden tasks to To-Do list",
+          "target_todo_entity": "Target To-Do List",
+          "warning_threshold": "Warning Threshold (%)",
+          "critical_threshold": "Critical Threshold (%)",
+          "notify_service": "Notification Service",
+          "reaction_entity": "Reaction Entity (Scene, Script, Helper)"
+        }
+      }
+    },
+    "error": {
+      "select_at_least_one_calendar": "Please select at least one calendar.",
+      "api_key_required": "An API key is required for this cloud provider."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Mental Load Settings",
+        "menu_options": {
+          "llm_settings": "AI Provider & Model",
+          "factors_and_profile": "5 Factors, Weights & Profile",
+          "calendar_and_todo": "Calendar Display & To-Do Sync",
+          "active_reactions": "Active Reactions & Thresholds"
+        }
+      },
+      "llm_settings": {
+        "title": "AI Provider & Model",
+        "data": {
+          "provider": "AI Provider",
+          "api_key": "API Key",
+          "model": "Model Name",
+          "base_url": "Base URL",
+          "temperature": "Temperature"
+        }
+      },
+      "factors_and_profile": {
+        "title": "5 Factors & Personal Profile",
+        "data": {
+          "user_profile": "Personal Profile & Stress Rules",
+          "weight_pacing": "Weight Factor 1: Pacing & Context Switching",
+          "weight_social": "Weight Factor 2: Social Battery",
+          "weight_mobility": "Weight Factor 3: Mobility & Travel",
+          "weight_ha_context": "Weight Factor 4: Live HA Context",
+          "weight_hidden_work": "Weight Factor 5: Invisible Head Work",
+          "context_todos": "Linked To-Do Lists",
+          "context_energy_sensor": "Sleep / Energy Sensor",
+          "context_weather": "Weather Entity"
+        }
+      },
+      "calendar_and_todo": {
+        "title": "Calendar & Invisible Tasks",
+        "data": {
+          "calendars": "Source Calendars",
+          "horizon_days": "Forecast Horizon (Days)",
+          "update_interval": "Update Interval (Minutes)",
+          "show_hidden_task_blocks": "Show hidden head-task blocks in calendar.mental_load",
+          "default_prep_minutes": "Default Prep Time (Min)",
+          "default_travel_minutes": "Default Travel Buffer (Min)",
+          "default_followup_minutes": "Default Follow-up Time (Min)",
+          "auto_push_todo": "Auto-push hidden tasks to To-Do list",
+          "target_todo_entity": "Target To-Do List"
+        }
+      },
+      "active_reactions": {
+        "title": "Active Reactions & Thresholds",
+        "data": {
+          "warning_threshold": "Warning Threshold (%)",
+          "critical_threshold": "Critical Threshold (%)",
+          "notify_service": "Notification Service (domain.service)",
+          "reaction_on_warning": "Trigger reaction on Warning",
+          "reaction_on_critical": "Trigger reaction on Critical",
+          "reaction_entity": "Reaction Entity (Scene, Script, Helper, Automation)"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Kalender & Zeitraum wählen",
+        "description": "Wähle deine Quell-Kalender (z. B. Google Calendar). Diese werden nur lesend abgefragt.",
+        "data": {
+          "calendars": "Quell-Kalender",
+          "horizon_days": "Vorschau-Horizont (Tage)",
+          "update_interval": "Aktualisierungsintervall (Minuten)",
+          "language": "Ausgabesprache"
+        }
+      },
+      "llm": {
+        "title": "KI-Modell & Provider verbinden",
+        "description": "Wähle deinen gewünschten KI-Anbieter (OpenAI, Anthropic, Mistral, Google Gemini, Ollama oder HA Conversation).",
+        "data": {
+          "provider": "KI-Provider",
+          "api_key": "API-Key (falls erforderlich)",
+          "model": "Modellname (leer = Standardmodell)",
+          "base_url": "Custom Base-URL (optional, z. B. Ollama http://localhost:11434/v1)",
+          "temperature": "Temperatur (Kreativität)"
+        }
+      },
+      "profile_and_reactions": {
+        "title": "Profil, Kopf-Aufgaben & Aktive Reaktionen",
+        "description": "Definiere dein persönliches Belastungsprofil, optionale Live-Kontext-Sensoren und automatische Reaktionen.",
+        "data": {
+          "user_profile": "Persönliches Profil & Stress-Regeln",
+          "context_todos": "Faktor 4: Offene To-Do-Listen einbeziehen",
+          "context_energy_sensor": "Faktor 4: Schlaf- / Energie-Sensor",
+          "context_weather": "Faktor 4: Wetter-Entität",
+          "show_hidden_task_blocks": "Unsichtbare Kopf-Aufgaben als Zeitblöcke in calendar.mental_load anzeigen",
+          "auto_push_todo": "Erkannte Kopf-Aufgaben automatisch in To-Do-Liste pushen",
+          "target_todo_entity": "Ziel To-Do-Liste",
+          "warning_threshold": "Warn-Schwellenwert (%)",
+          "critical_threshold": "Kritisch-Schwellenwert (%)",
+          "notify_service": "Benachrichtigungs-Dienst (z. B. notify.mobile_app_...)",
+          "reaction_entity": "Smart-Home-Reaktion auslösen (Szene, Skript, Helfer)"
+        }
+      }
+    },
+    "error": {
+      "select_at_least_one_calendar": "Bitte mindestens einen Kalender auswählen.",
+      "api_key_required": "Für diesen Cloud-Provider ist ein API-Key erforderlich."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Mental Load Einstellungen",
+        "menu_options": {
+          "llm_settings": "KI-Provider & Modell",
+          "factors_and_profile": "5 Faktoren, Gewichtungen & Profil",
+          "calendar_and_todo": "Kalender-Darstellung & To-Do-Sync",
+          "active_reactions": "Aktive Reaktionen & Schwellenwerte"
+        }
+      },
+      "llm_settings": {
+        "title": "KI-Provider & Modell anpassen",
+        "data": {
+          "provider": "KI-Provider",
+          "api_key": "API-Key",
+          "model": "Modellname",
+          "base_url": "Base-URL (für Ollama / Custom OpenAI)",
+          "temperature": "Temperatur"
+        }
+      },
+      "factors_and_profile": {
+        "title": "5 Faktoren & Persönliches Profil",
+        "data": {
+          "user_profile": "Persönliches Profil & Stress-Regeln",
+          "weight_pacing": "Gewichtung Faktor 1: Taktung & Kontextwechsel",
+          "weight_social": "Gewichtung Faktor 2: Soziale Batterie",
+          "weight_mobility": "Gewichtung Faktor 3: Ortswechsel & Mobilität",
+          "weight_ha_context": "Gewichtung Faktor 4: Live-HA-Kontext",
+          "weight_hidden_work": "Gewichtung Faktor 5: Unsichtbare Kopfarbeit",
+          "context_todos": "Verknüpfte To-Do-Listen",
+          "context_energy_sensor": "Schlaf- / Energie-Sensor",
+          "context_weather": "Wetter-Entität"
+        }
+      },
+      "calendar_and_todo": {
+        "title": "Kalender & Unsichtbare Aufgaben",
+        "data": {
+          "calendars": "Quell-Kalender",
+          "horizon_days": "Vorschau-Horizont (Tage)",
+          "update_interval": "Aktualisierungsintervall (Minuten)",
+          "show_hidden_task_blocks": "Kopf-Aufgaben als Blöcke in calendar.mental_load anzeigen",
+          "default_prep_minutes": "Standard-Vorbereitungszeit (Min)",
+          "default_travel_minutes": "Standard-Fahrzeit/Puffer (Min)",
+          "default_followup_minutes": "Standard-Nachbereitungszeit (Min)",
+          "auto_push_todo": "Kopf-Aufgaben automatisch in To-Do-Liste pushen",
+          "target_todo_entity": "Ziel To-Do-Liste"
+        }
+      },
+      "active_reactions": {
+        "title": "Aktive Reaktionen & Schwellenwerte",
+        "data": {
+          "warning_threshold": "Warn-Schwellenwert (%)",
+          "critical_threshold": "Kritisch-Schwellenwert (%)",
+          "notify_service": "Benachrichtigungs-Dienst (domain.service)",
+          "reaction_on_warning": "Reaktion bereits bei Warnung auslösen",
+          "reaction_on_critical": "Reaktion bei Kritisch auslösen",
+          "reaction_entity": "Reaktions-Entität (Szene, Skript, Helfer, Automation)"
+        }
+      }
+    }
+  }
+}

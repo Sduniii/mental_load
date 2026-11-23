@@ -1,0 +1,66 @@
+refresh:
+  name: Mental Load neu berechnen
+  description: Liest alle konfigurierten Kalender neu ein und startet die KI-Analyse.
+  fields:
+    entry_id:
+      name: Config Entry ID
+      description: Optional, falls mehrere Mental-Load-Profile existieren.
+      selector:
+        text:
+    clear_cache:
+      name: Cache leeren
+      description: Erzwingt einen frischen KI-Aufruf für alle Tage im Horizont.
+      default: false
+      selector:
+        boolean:
+
+submit_feedback:
+  name: Mental-Load-Feedback geben (Faktor 5 Lernen)
+  description: Kalibriert zukünftige KI-Bewertungen anhand deines tatsächlichen Stress-Empfindens.
+  fields:
+    date:
+      name: Datum (YYYY-MM-DD)
+      description: Leer lassen für heute.
+      selector:
+        text:
+    perceived_score:
+      name: Gefühlter Score (0-100%)
+      description: Optionaler exakter Wert, wie sich der Tag angefühlt hat.
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+    adjustment:
+      name: Relative Anpassung
+      default: accurate
+      selector:
+        select:
+          options:
+            - much_lower
+            - lower
+            - accurate
+            - higher
+            - much_higher
+    note:
+      name: Notiz für die KI
+      description: Was hat den Tag leichter oder schwerer gemacht?
+      example: "Sport am Abend hat meinen Kopf komplett freigemacht."
+      selector:
+        text:
+
+push_hidden_tasks:
+  name: Unsichtbare Kopf-Aufgaben an To-Do senden
+  description: Überträgt alle erkannten Vor- und Nachbereitungs-Aufgaben eines Tages ohne Duplikate in eine todo-Liste.
+  fields:
+    date:
+      name: Datum (YYYY-MM-DD)
+      description: Leer lassen für heute.
+      selector:
+        text:
+    todo_entity:
+      name: Ziel To-Do-Liste
+      description: Optional, überschreibt die in den Einstellungen hinterlegte Liste.
+      selector:
+        entity:
+          domain: todo

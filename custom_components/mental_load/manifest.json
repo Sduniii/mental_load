@@ -1,0 +1,13 @@
+{
+  "domain": "mental_load",
+  "name": "Mental Load Analyzer",
+  "codeowners": ["@Sduniii"],
+  "config_flow": true,
+  "dependencies": ["calendar", "frontend", "http", "lovelace"],
+  "after_dependencies": ["conversation", "todo", "weather"],
+  "documentation": "https://github.com/Sduniii/mental_load",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Sduniii/mental_load/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
