@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fcntl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
@@ -23,10 +24,12 @@ import pty
 import re
 import select
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
+import termios
 import threading
 import time
 import urllib.request
@@ -64,10 +67,11 @@ def list_agy_models(agy_bin: str) -> list[str]:
     """Query available models via `agy models`."""
     proc = subprocess.run(
         [agy_bin, "models"],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         cwd=tempfile.gettempdir(),
-        timeout=30,
+        timeout=20,
         check=False,
     )
     cleaned = ANSI_RE.sub("", proc.stdout)
@@ -93,6 +97,7 @@ def run_agy_prompt(agy_bin: str, model: str, prompt: str, timeout: int = 90) -> 
             "--print",
             prompt,
         ],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         cwd=tempfile.gettempdir(),
@@ -158,6 +163,25 @@ def import_session_bundle(bundle_b64: str, home_dir: Path | None = None) -> list
     return imported
 
 
+def extract_oauth_url(text: str) -> str:
+    """Extract wrapped Google OAuth URL from agy TUI box output."""
+    lines = text.splitlines()
+    collecting = False
+    chunks: list[str] = []
+    for raw in lines:
+        stripped = raw.strip()
+        if not collecting:
+            idx = stripped.find("https://accounts.google.com/o/oauth2/auth")
+            if idx != -1:
+                collecting = True
+                chunks.append(stripped[idx:])
+        else:
+            if not stripped or stripped.startswith("─") or stripped.startswith("Copy "):
+                break
+            chunks.append(stripped)
+    return "".join(chunks)
+
+
 class InteractiveLoginManager:
     """Manages an interactive PTY session of `agy` for browser-based OAuth login."""
 
@@ -171,20 +195,33 @@ class InteractiveLoginManager:
         with self._lock:
             self.stop()
             master_fd, slave_fd = pty.openpty()
+            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 240, 0, 0))
             self._master_fd = master_fd
             self._output = ""
+            env = {
+                **os.environ,
+                "TERM": "xterm-256color",
+                "SSH_CONNECTION": "127.0.0.1 12345 127.0.0.1 22",
+            }
             self._proc = subprocess.Popen(
                 [agy_bin],
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
+                env=env,
                 cwd=tempfile.gettempdir(),
                 close_fds=True,
             )
             os.close(slave_fd)
             threading.Thread(target=self._reader_loop, daemon=True).start()
-            time.sleep(1.5)
-            return ANSI_RE.sub("", self._output)
+
+        # Wait for login menu and automatically select "1. Google OAuth"
+        time.sleep(2.0)
+        with self._lock:
+            if self._master_fd is not None and "Select login method" in self._output:
+                os.write(self._master_fd, b"\r")
+        time.sleep(2.2)
+        return self.read_output()
 
     def _reader_loop(self) -> None:
         fd = self._master_fd
@@ -198,7 +235,7 @@ class InteractiveLoginManager:
                     if not chunk:
                         break
                     with self._lock:
-                        self._output = (self._output + chunk.decode("utf-8", errors="replace"))[-12000:]
+                        self._output = (self._output + chunk.decode("utf-8", errors="replace"))[-16000:]
                 elif self._proc and self._proc.poll() is not None:
                     break
             except OSError:
@@ -207,8 +244,8 @@ class InteractiveLoginManager:
     def send_input(self, text: str) -> str:
         with self._lock:
             if self._master_fd is not None:
-                os.write(self._master_fd, (text + "\n").encode("utf-8"))
-        time.sleep(1.0)
+                os.write(self._master_fd, (text.strip() + "\r").encode("utf-8"))
+        time.sleep(2.0)
         return self.read_output()
 
     def read_output(self) -> str:
@@ -237,15 +274,17 @@ INGRESS_HTML = """<!doctype html>
 <title>Antigravity CLI Bridge</title>
 <style>
   body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px; }
-  .wrap { max-width: 820px; margin: 0 auto; display: grid; gap: 16px; }
+  .wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 16px; }
   .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 18px; }
   h1, h2 { margin-top: 0; }
-  pre { background: #020617; padding: 12px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; max-height: 280px; font-size: 12px; }
-  textarea, input { width: 100%; box-sizing: border-box; background: #0f172a; color: #f8fafc; border: 1px solid #475569; border-radius: 8px; padding: 8px; margin: 6px 0; }
-  button { background: #3b82f6; color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-weight: 600; margin-right: 8px; }
+  pre { background: #020617; padding: 12px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; max-height: 260px; font-size: 12px; }
+  textarea, input { width: 100%; box-sizing: border-box; background: #0f172a; color: #f8fafc; border: 1px solid #475569; border-radius: 8px; padding: 10px; margin: 8px 0; }
+  button, a.btn { display: inline-block; text-decoration: none; background: #3b82f6; color: #fff; border: 0; border-radius: 8px; padding: 9px 14px; cursor: pointer; font-weight: 600; margin-right: 8px; font-size: 14px; }
+  a.btn-green { background: #16a34a; }
   button.sec { background: #475569; }
   .ok { color: #4ade80; }
   .muted { color: #94a3b8; font-size: 0.9rem; }
+  #oauth-box { margin: 12px 0; padding: 12px; background: #052e16; border: 1px solid #16a34a; border-radius: 8px; display: none; }
 </style>
 </head>
 <body>
@@ -253,31 +292,46 @@ INGRESS_HTML = """<!doctype html>
   <div class="card">
     <h1>🧠 Antigravity CLI Bridge (Home Assistant App)</h1>
     <div id="status" class="muted">Lade Status...</div>
-    <p class="muted">Bridge-URL für die Integration <strong>Mental Load Analyzer</strong>: <code>http://127.0.0.1:11435/v1</code></p>
+    <p class="muted">Bridge-URL für <strong>Mental Load Analyzer</strong>: <code>http://127.0.0.1:11435/v1</code></p>
     <button onclick="loadStatus()">↻ Status prüfen</button>
     <button onclick="testPrompt()">⚡ Live-Test ("BEREIT")</button>
   </div>
 
   <div class="card">
-    <h2>Option 1: Interaktiver Google-Login in dieser App</h2>
-    <p class="muted">Startet <code>agy</code> im Terminal-Modus und zeigt den Anmelde-Link oder Prompt an.</p>
+    <h2>Anmeldung bei Google Antigravity (einmalig)</h2>
+    <p class="muted">1. Klicke auf <strong>Login starten</strong> → 2. Öffne den angezeigten Google-Link → 3. Kopiere den Code zurück in das Eingabefeld.</p>
     <button onclick="startLogin()">🔑 Login starten</button>
-    <button class="sec" onclick="pollLogin()">🔄 Ausgabe aktualisieren</button>
+    <button class="sec" onclick="pollLogin()">🔄 Aktualisieren</button>
     <button class="sec" onclick="stopLogin()">⏹ Beenden</button>
+
+    <div id="oauth-box">
+      <a id="oauth-link" class="btn btn-green" href="#" target="_blank" rel="noopener noreferrer">🔗 Google-Anmeldelink im Browser öffnen</a>
+      <div class="muted" style="margin-top:6px;">Danach den angezeigten Autorisierungscode hier einfügen:</div>
+    </div>
+
+    <input id="pty-in" placeholder="Authorization Code hier einfügen..." />
+    <button onclick="sendLoginInput()">✅ Code absenden</button>
     <pre id="pty-out">(Noch nicht gestartet)</pre>
-    <input id="pty-in" placeholder="Optional: Eingabe / Code an agy senden..." />
-    <button onclick="sendLoginInput()">Senden</button>
   </div>
 
   <div class="card">
-    <h2>Option 2: Bestehende Session vom PC übernehmen</h2>
-    <p class="muted">Führe auf deinem PC einmal aus: <code>python3 tools/agy_bridge_server.py --export-session</code> und füge das Bundle hier ein (oder pushe direkt per <code>--push-session</code>).</p>
-    <textarea id="bundle" rows="4" placeholder="Base64 Session-Bundle hier einfügen..."></textarea>
-    <button onclick="importBundle()">📥 Session importieren</button>
+    <h2>Alternative: Session-Bundle importieren</h2>
+    <textarea id="bundle" rows="3" placeholder="Base64 Session-Bundle hier einfügen..."></textarea>
+    <button onclick="importBundle()">📥 Importieren</button>
     <div id="import-res" class="muted"></div>
   </div>
 </div>
 <script>
+let pollTimer = null;
+function applyLoginData(d) {
+  document.getElementById('pty-out').textContent = d.output || '';
+  const box = document.getElementById('oauth-box');
+  const link = document.getElementById('oauth-link');
+  if (d.oauth_url) {
+    link.href = d.oauth_url;
+    box.style.display = 'block';
+  }
+}
 async function loadStatus() {
   const r = await fetch('api/status');
   const d = await r.json();
@@ -293,14 +347,14 @@ async function testPrompt() {
     : `❌ Fehler: ${d.error}`;
 }
 async function startLogin() {
+  document.getElementById('pty-out').textContent = 'Starte agy Google OAuth...';
   const r = await fetch('api/login/start', { method: 'POST' });
-  const d = await r.json();
-  document.getElementById('pty-out').textContent = d.output || '';
+  applyLoginData(await r.json());
+  if (!pollTimer) pollTimer = setInterval(pollLogin, 2000);
 }
 async function pollLogin() {
   const r = await fetch('api/login/output');
-  const d = await r.json();
-  document.getElementById('pty-out').textContent = d.output || '';
+  applyLoginData(await r.json());
 }
 async function sendLoginInput() {
   const val = document.getElementById('pty-in').value;
@@ -308,11 +362,12 @@ async function sendLoginInput() {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ text: val })
   });
-  const d = await r.json();
-  document.getElementById('pty-out').textContent = d.output || '';
+  applyLoginData(await r.json());
   document.getElementById('pty-in').value = '';
+  setTimeout(loadStatus, 1500);
 }
 async function stopLogin() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   await fetch('api/login/stop', { method: 'POST' });
   document.getElementById('pty-out').textContent += '\\n[Beendet]';
 }
@@ -394,7 +449,8 @@ class AgyBridgeHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"agy_bin": self.agy_bin, "models": models})
             return
         if path == "/api/login/output":
-            self._send_json(200, {"output": LOGIN_MANAGER.read_output()})
+            out = LOGIN_MANAGER.read_output()
+            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(out)})
             return
         if path in ("/v1/models", "/models"):
             if not self._check_auth():
@@ -427,12 +483,12 @@ class AgyBridgeHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/login/start":
             out = LOGIN_MANAGER.start(self.agy_bin)
-            self._send_json(200, {"output": out})
+            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(out)})
             return
         if path == "/api/login/input":
             body = self._read_json_body()
             out = LOGIN_MANAGER.send_input(str(body.get("text", "")))
-            self._send_json(200, {"output": out})
+            self._send_json(200, {"output": out, "oauth_url": extract_oauth_url(out)})
             return
         if path == "/api/login/stop":
             LOGIN_MANAGER.stop()

@@ -267,3 +267,16 @@ def test_bridge_session_bundle_roundtrip(tmp_path: Any) -> None:
     assert ".gemini/google_accounts.json" in imported
     assert ".gemini/antigravity-cli/jetski_state.pbtxt" in imported
     assert (dst_home / ".gemini" / "google_accounts.json").read_text() == '{"active":"test@example.com"}'
+
+
+def test_extract_wrapped_oauth_url() -> None:
+    from tools.agy_bridge_server import extract_oauth_url
+
+    sample = (
+        "Open the URL below in your browser:\n"
+        "────────\n"
+        " https://accounts.google.com/o/oauth2/auth?access_type=offline&prompt\n"
+        " =consent&state=XYZ\n"
+        "────────\n"
+    )
+    assert extract_oauth_url(sample) == "https://accounts.google.com/o/oauth2/auth?access_type=offline&prompt=consent&state=XYZ"
