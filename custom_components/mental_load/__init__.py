@@ -183,12 +183,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Mental Load Analyzer from a ConfigEntry."""
     hass.data.setdefault(DOMAIN, {})
     coordinator = MentalLoadCoordinator(hass, entry)
-    await coordinator.async_load_state()
-    await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_seed_from_cache()
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
     entry.async_on_unload(entry.add_update_listener(_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    if hasattr(entry, "async_create_background_task"):
+        entry.async_create_background_task(
+            hass,
+            coordinator.async_refresh(),
+            f"{DOMAIN}_initial_refresh_{entry.entry_id}",
+        )
+    else:
+        hass.async_create_task(coordinator.async_refresh())
     return True
 
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.1] — 2026-11-23
+
+### Fixed
+- **Non-Blocking Startup (`async_setup_entry`):** Integration seeds sensors/calendar immediately from the persistent cache and runs the initial live refresh in the background so Home Assistant no longer stays stuck in `setup_in_progress` during slow cold refreshes.
+- **Batch Timeout & Chunk Tuning for `antigravity_cli`:** Added `BATCH_REQUEST_TIMEOUT_SECONDS = 120`, reduced `antigravity_cli` batch chunk size from `7` to `4`, and improved exception logging (`TimeoutError` type name instead of empty `()`) to eliminate cascading 45s batch timeouts.
+- **To-Do Push Fallback (`due_datetime` → `due_date`):** Automatically falls back to `due_date` (or no due field) when pushing hidden tasks to target `todo.*` entities that do not support `due_datetime` (e.g. `todo.zuhause`).
+
+---
+
 ## [1.9.0] — 2026-11-23
 
 ### Performance & Token Optimization (~75–90% fewer tokens)

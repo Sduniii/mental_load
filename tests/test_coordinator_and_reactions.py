@@ -697,3 +697,161 @@ def test_fingerprint_stability_against_weather_and_energy_jitter() -> None:
     assert coord._compute_day_fingerprint("2026-11-26", [], ctx_a, cfg, include_live_context=False) == coord._compute_day_fingerprint(
         "2026-11-26", [], ctx_c, cfg, include_live_context=False
     )
+
+
+async def test_non_blocking_setup_seeds_cache_immediately(monkeypatch: Any) -> None:
+    from custom_components.mental_load import async_setup_entry
+    from custom_components.mental_load.const import DOMAIN
+    from custom_components.mental_load.models import DayLoadAnalysis
+
+    hass = FakeHass()
+    today_str = datetime.date(2026, 11, 23).isoformat()
+    entry = ConfigEntry(
+        entry_id="seed_entry",
+        data={CONF_CALENDARS: ["calendar.google"], CONF_HORIZON_DAYS: 2, CONF_PROVIDER: PROVIDER_HEURISTIC},
+    )
+
+    seeded_day = DayLoadAnalysis(
+        date=datetime.date(2026, 11, 23),
+        score=55,
+        level="medium",
+        badge_summary="🟡 55% Cached",
+        reasoning="From cache",
+        factor_breakdown={"pacing_context": 55},
+    )
+
+    class _PreseededStore:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def async_load(self) -> dict[str, Any]:
+            return {"cache": {today_str: {"fingerprint": "abc", "analysis": seeded_day.to_dict()}}}
+
+        async def async_save(self, data: dict[str, Any]) -> None:
+            pass
+
+    monkeypatch.setattr("custom_components.mental_load.coordinator.Store", _PreseededStore)
+
+    scheduled: list[str] = []
+
+    def _fake_bg_task(_hass: Any, coro: Any, name: str) -> None:
+        scheduled.append(name)
+        coro.close()
+
+    entry.async_create_background_task = _fake_bg_task  # type: ignore[attr-defined]
+    entry.async_on_unload = lambda cb: cb  # type: ignore[attr-defined]
+    entry.add_update_listener = lambda fn: fn  # type: ignore[attr-defined]
+    forward_mock = AsyncMock()
+    hass.config_entries = type("CE", (), {"async_forward_entry_setups": forward_mock})()
+
+    ok = await async_setup_entry(hass, entry)
+    assert ok is True
+    coord = hass.data[DOMAIN][entry.entry_id]
+    assert today_str in coord.data
+    assert coord.data[today_str].score == 55
+    assert coord.data[today_str].cached is True
+    assert scheduled == [f"{DOMAIN}_initial_refresh_{entry.entry_id}"]
+    forward_mock.assert_awaited_once()
+
+
+async def test_antigravity_cli_uses_batch_size_4() -> None:
+    from custom_components.mental_load.const import PROVIDER_ANTIGRAVITY_CLI
+    from custom_components.mental_load.models import DayLoadAnalysis
+
+    hass = FakeHass()
+    base_date = datetime.date(2026, 11, 23)
+    events = [
+        {
+            "summary": f"Termin {i}",
+            "start": f"{(base_date + datetime.timedelta(days=i)).isoformat()}T10:00:00+01:00",
+            "end": f"{(base_date + datetime.timedelta(days=i)).isoformat()}T11:00:00+01:00",
+        }
+        for i in range(6)
+    ]
+    hass.services.set_response("calendar", "get_events", {"calendar.google": {"events": events}})
+
+    batch_sizes: list[int] = []
+
+    async def _fake_batch(days_items: list[Any], cfg: dict[str, Any], fb: list[Any]) -> dict[str, DayLoadAnalysis]:
+        batch_sizes.append(len(days_items))
+        return {
+            d_date.isoformat(): DayLoadAnalysis(
+                date=d_date,
+                score=42,
+                level="medium",
+                badge_summary="🟡 42%",
+                reasoning="ok",
+                factor_breakdown={},
+                provider_used=PROVIDER_ANTIGRAVITY_CLI,
+            )
+            for d_date, _, _, _ in days_items
+        }
+
+    entry = ConfigEntry(
+        entry_id="agy_batch_entry",
+        data={CONF_CALENDARS: ["calendar.google"], CONF_HORIZON_DAYS: 6, CONF_PROVIDER: PROVIDER_ANTIGRAVITY_CLI},
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    coord.llm_client = type("StubLLM", (), {"async_analyze_days_batch": staticmethod(_fake_batch)})()  # type: ignore[assignment]
+    await coord.async_config_entry_first_refresh()
+
+    assert batch_sizes == [4, 2]
+
+
+async def test_push_hidden_tasks_falls_back_from_due_datetime_to_due_date() -> None:
+    from custom_components.mental_load.models import DayLoadAnalysis, HiddenTask
+
+    hass = FakeHass()
+    seen_payloads: list[dict[str, Any]] = []
+
+    async def _todo_service(domain: str, service: str, data: dict[str, Any], blocking: bool = False, return_response: bool = False) -> dict[str, Any]:
+        hass.services.calls.append((domain, service, data, return_response))
+        if domain == "todo" and service == "add_item":
+            seen_payloads.append(dict(data))
+            if "due_datetime" in data:
+                raise ValueError("Entity does not support setting field: due_datetime")
+        return {}
+
+    hass.services.async_call = _todo_service  # type: ignore[method-assign]
+
+    entry = ConfigEntry(
+        entry_id="todo_fallback_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google"],
+            CONF_TARGET_TODO_ENTITY: "todo.zuhause",
+            CONF_HORIZON_DAYS: 1,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    tz = datetime.timezone(datetime.timedelta(hours=1))
+    day = datetime.date(2026, 11, 23)
+    task = HiddenTask(
+        uid="task_due_fb",
+        parent_event_summary="Sport",
+        title="🎒 Einpacken: Sportbeutel packen",
+        category="packing",
+        start=datetime.datetime(2026, 11, 23, 8, 0, tzinfo=tz),
+        end=datetime.datetime(2026, 11, 23, 8, 15, tzinfo=tz),
+        checklist=["Turnschuhe"],
+    )
+    analysis = DayLoadAnalysis(
+        date=day,
+        score=30,
+        level="low",
+        badge_summary="🟢 30%",
+        reasoning="ok",
+        factor_breakdown={},
+        hidden_tasks=[task],
+    )
+    pushed = await coord.async_push_hidden_tasks_to_todo(
+        target_date=day.isoformat(),
+        todo_entity="todo.zuhause",
+        analyses={day.isoformat(): analysis},
+        save_after=False,
+    )
+    assert pushed == 1
+    assert len(seen_payloads) == 2
+    assert "due_datetime" in seen_payloads[0]
+    assert seen_payloads[1]["due_date"] == "2026-11-23"
+    assert "due_datetime" not in seen_payloads[1]

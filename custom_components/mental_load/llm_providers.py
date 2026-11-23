@@ -44,6 +44,13 @@ from .prompt_builder import (
 _LOGGER = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_SECONDS = 45
+BATCH_REQUEST_TIMEOUT_SECONDS = 120
+
+
+def _format_exc(err: Exception) -> str:
+    """Return a non-empty exception label even for bare exceptions like TimeoutError()."""
+    msg = str(err).strip()
+    return f"{type(err).__name__}: {msg}" if msg else type(err).__name__
 
 
 class LLMProviderError(Exception):
@@ -113,7 +120,7 @@ class LLMProviderClient:
                 "LLM provider '%s' failed for %s (%s); falling back to local heuristic engine",
                 provider,
                 target_date.isoformat(),
-                err,
+                _format_exc(err),
             )
             return analyze_day_heuristic(
                 target_date=target_date,
@@ -171,6 +178,7 @@ class LLMProviderClient:
                 user_prompt=user_prompt,
                 config=config,
                 max_tokens=max_tok,
+                timeout_seconds=BATCH_REQUEST_TIMEOUT_SECONDS,
             )
             results = parse_llm_batch_response(
                 raw_text=raw_response,
@@ -183,7 +191,7 @@ class LLMProviderClient:
                 "LLM batch request (%s, %d days) failed (%s); falling back per day",
                 provider,
                 len(days_items),
-                err,
+                _format_exc(err),
             )
 
         for day_date, day_events, day_ctx, include_live in days_items:
@@ -225,7 +233,7 @@ class LLMProviderClient:
             _LOGGER.warning(
                 "LLM provider '%s' failed project breakdown (%s); using heuristic breakdown",
                 provider,
-                err,
+                _format_exc(err),
             )
             return decompose_project_todos_heuristic(project_items, config)
 
@@ -236,6 +244,7 @@ class LLMProviderClient:
         user_prompt: str,
         config: dict[str, Any],
         max_tokens: int = 2048,
+        timeout_seconds: int = REQUEST_TIMEOUT_SECONDS,
     ) -> str:
         """Dispatch prompt to the selected provider endpoint."""
         model = str(config.get(CONF_MODEL) or DEFAULT_MODELS.get(provider, ""))
@@ -255,6 +264,7 @@ class LLMProviderClient:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 config=config,
+                timeout_seconds=timeout_seconds,
             )
         if provider in (PROVIDER_OPENAI, PROVIDER_MISTRAL, PROVIDER_CUSTOM_OPENAI):
             return await self._call_openai_compatible(
@@ -265,6 +275,7 @@ class LLMProviderClient:
                 temperature=temperature,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                timeout_seconds=timeout_seconds,
             )
         if provider == PROVIDER_ANTHROPIC:
             return await self._call_anthropic(
@@ -275,6 +286,7 @@ class LLMProviderClient:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
             )
         if provider == PROVIDER_GOOGLE:
             return await self._call_google_gemini(
@@ -284,6 +296,7 @@ class LLMProviderClient:
                 temperature=temperature,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                timeout_seconds=timeout_seconds,
             )
         if provider == PROVIDER_HA_CONVERSATION:
             return await self._call_ha_conversation(
@@ -298,10 +311,11 @@ class LLMProviderClient:
         url: str,
         headers: dict[str, str],
         payload: dict[str, Any],
+        timeout_seconds: int = REQUEST_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
         """Execute an async HTTP POST request and return parsed JSON."""
         session = self._get_session()
-        async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+        async with asyncio.timeout(timeout_seconds):
             async with session.post(url, headers=headers, json=payload) as resp:
                 if resp.status >= 400:
                     body = await resp.text()
@@ -317,6 +331,7 @@ class LLMProviderClient:
         temperature: float,
         system_prompt: str,
         user_prompt: str,
+        timeout_seconds: int = REQUEST_TIMEOUT_SECONDS,
     ) -> str:
         """Call OpenAI, Mistral, or Ollama/Custom OpenAI-compatible chat completions API."""
         if provider in (PROVIDER_OPENAI, PROVIDER_MISTRAL) and not api_key:
@@ -337,7 +352,12 @@ class LLMProviderClient:
         if provider in (PROVIDER_OPENAI, PROVIDER_MISTRAL):
             payload["response_format"] = {"type": "json_object"}
 
-        data = await self._post_json(f"{base_url}/chat/completions", headers, payload)
+        data = await self._post_json(
+            f"{base_url}/chat/completions",
+            headers,
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as err:
@@ -353,6 +373,7 @@ class LLMProviderClient:
         system_prompt: str,
         user_prompt: str,
         max_tokens: int = 2048,
+        timeout_seconds: int = REQUEST_TIMEOUT_SECONDS,
     ) -> str:
         """Call Anthropic Messages API with ephemeral system prompt caching."""
         if not api_key:
@@ -376,7 +397,12 @@ class LLMProviderClient:
             ],
             "messages": [{"role": "user", "content": user_prompt}],
         }
-        data = await self._post_json(f"{base_url}/messages", headers, payload)
+        data = await self._post_json(
+            f"{base_url}/messages",
+            headers,
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
         try:
             blocks = data["content"]
             text_parts = [b["text"] for b in blocks if isinstance(b, dict) and b.get("type") == "text"]
@@ -394,6 +420,7 @@ class LLMProviderClient:
         temperature: float,
         system_prompt: str,
         user_prompt: str,
+        timeout_seconds: int = REQUEST_TIMEOUT_SECONDS,
     ) -> str:
         """Call Google Gemini generateContent REST API."""
         if not api_key:
@@ -409,7 +436,12 @@ class LLMProviderClient:
                 "responseMimeType": "application/json",
             },
         }
-        data = await self._post_json(url, headers, payload)
+        data = await self._post_json(
+            url,
+            headers,
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
         try:
             parts = data["candidates"][0]["content"]["parts"]
             return "".join(str(p.get("text", "")) for p in parts)
@@ -425,6 +457,7 @@ class LLMProviderClient:
         system_prompt: str,
         user_prompt: str,
         config: dict[str, Any],
+        timeout_seconds: int = REQUEST_TIMEOUT_SECONDS,
     ) -> str:
         """Call Antigravity CLI (`agy`) either via HTTP bridge or local subprocess."""
         if base_url:
@@ -436,6 +469,7 @@ class LLMProviderClient:
                 temperature=temperature,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                timeout_seconds=timeout_seconds,
             )
 
         configured_bin = str(config.get(CONF_AGY_BINARY) or DEFAULT_AGY_BINARY).strip()
@@ -466,7 +500,10 @@ class LLMProviderClient:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=REQUEST_TIMEOUT_SECONDS * 2)
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=max(timeout_seconds, REQUEST_TIMEOUT_SECONDS * 2),
+            )
         except TimeoutError as err:
             proc.kill()
             await proc.wait()

@@ -61,6 +61,7 @@ from .const import (
     LEVEL_HIGH,
     LEVEL_ORDER,
     MAX_FEEDBACK_HISTORY,
+    PROVIDER_ANTIGRAVITY_CLI,
     STORAGE_VERSION,
 )
 from .llm_providers import LLMProviderClient
@@ -175,6 +176,33 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self._project_breakdown_cache = dict(stored.get("project_breakdown_cache", {}))
         self._state_loaded = True
 
+    async def async_seed_from_cache(self) -> bool:
+        """Seed coordinator data from persistent cache for instant non-blocking startup."""
+        await self.async_load_state()
+        config = self.merged_config
+        horizon = max(1, min(30, int(config.get(CONF_HORIZON_DAYS, DEFAULT_HORIZON_DAYS))))
+        today = dt_util.now().date()
+        seeded: dict[str, DayLoadAnalysis] = {}
+        for offset in range(horizon):
+            day_str = (today + datetime.timedelta(days=offset)).isoformat()
+            cached_entry = self._cache.get(day_str)
+            if isinstance(cached_entry, dict) and isinstance(cached_entry.get("analysis"), dict):
+                try:
+                    analysis = DayLoadAnalysis.from_dict(cached_entry["analysis"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                analysis.cached = True
+                seeded[day_str] = analysis
+
+        if seeded:
+            self._raw_analyses = dict(seeded)
+        payload = seeded if seeded else {}
+        if hasattr(self, "async_set_updated_data"):
+            self.async_set_updated_data(payload)
+        else:
+            self.data = payload
+        return bool(seeded)
+
     async def _async_save_state(self) -> None:
         """Persist cache, feedback memory, and deduplication markers."""
         await self._store.async_save(
@@ -272,7 +300,8 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                 and "async_analyze_days_batch" in self.llm_client.__dict__
             )
             if supports_batch:
-                batch_size = 7
+                provider = str(config.get(CONF_PROVIDER, ""))
+                batch_size = 4 if provider == PROVIDER_ANTIGRAVITY_CLI else 7
                 for idx in range(0, len(uncached_days), batch_size):
                     chunk = uncached_days[idx : idx + batch_size]
                     batch_input = [
@@ -673,22 +702,41 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             item_name = f"{task.title} ({task.parent_event_summary})" if task.parent_event_summary else task.title
             checklist_lines = "\n".join(f"- [ ] {step}" for step in task.checklist)
             description = f"{checklist_lines}\n\n[ML-{task.uid}]".strip()
-            try:
-                await self.hass.services.async_call(
-                    "todo",
-                    "add_item",
-                    {
-                        "entity_id": target_todo,
-                        "item": item_name,
-                        "description": description,
-                        "due_datetime": task.start.isoformat(),
-                    },
-                    blocking=True,
-                )
-                self._pushed_todo_uids.add(task.uid)
-                pushed_count += 1
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.error("Failed pushing hidden task '%s' to %s: %s", item_name, target_todo, err)
+            base_payload = {
+                "entity_id": target_todo,
+                "item": item_name,
+                "description": description,
+            }
+            payload_candidates = [
+                {**base_payload, "due_datetime": task.start.isoformat()},
+                {**base_payload, "due_date": task.start.date().isoformat()},
+                base_payload,
+            ]
+            last_err: Exception | None = None
+            for idx, payload in enumerate(payload_candidates):
+                try:
+                    await self.hass.services.async_call(
+                        "todo",
+                        "add_item",
+                        payload,
+                        blocking=True,
+                    )
+                    self._pushed_todo_uids.add(task.uid)
+                    pushed_count += 1
+                    last_err = None
+                    break
+                except Exception as err:  # noqa: BLE001
+                    last_err = err
+                    err_text = str(err).lower()
+                    has_fallback = idx < len(payload_candidates) - 1
+                    if has_fallback and any(
+                        token in err_text
+                        for token in ("does not support", "due_datetime", "due_date")
+                    ):
+                        continue
+                    break
+            if last_err is not None:
+                _LOGGER.error("Failed pushing hidden task '%s' to %s: %s", item_name, target_todo, last_err)
 
         if save_after and pushed_count > 0:
             await self._async_save_state()

@@ -346,3 +346,53 @@ def test_extract_wrapped_oauth_url() -> None:
     extracted = extract_oauth_url(osc8)
     assert extracted == "https://accounts.google.com/o/oauth2/auth?scope=a+b&state=1"
     assert extracted.count("scope=") == 1
+
+
+async def test_batch_request_uses_extended_timeout_and_formats_empty_timeout(
+    monkeypatch: Any,
+) -> None:
+    import asyncio
+    from custom_components.mental_load.llm_providers import (
+        BATCH_REQUEST_TIMEOUT_SECONDS,
+        _format_exc,
+    )
+
+    assert _format_exc(TimeoutError()) == "TimeoutError"
+    assert _format_exc(RuntimeError("boom")) == "RuntimeError: boom"
+
+    observed_timeouts: list[int | float | None] = []
+    real_timeout = asyncio.timeout
+
+    def _spy_timeout(delay: int | float | None) -> Any:
+        observed_timeouts.append(delay)
+        return real_timeout(delay)
+
+    monkeypatch.setattr(asyncio, "timeout", _spy_timeout)
+
+    batch_payload = {
+        "days": {
+            "2026-11-23": {"score": 40, "reasoning": "Day 1", "hidden_tasks": []},
+            "2026-11-24": {"score": 50, "reasoning": "Day 2", "hidden_tasks": []},
+        }
+    }
+    session = _FakeSession(
+        _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": json.dumps(batch_payload)}}]},
+        )
+    )
+    client = LLMProviderClient(hass=None, session=session)
+    res = await client.async_analyze_days_batch(
+        [
+            (datetime.date(2026, 11, 23), _sample_events(), {}, True),
+            (datetime.date(2026, 11, 24), _sample_events(), {}, True),
+        ],
+        {
+            CONF_PROVIDER: PROVIDER_ANTIGRAVITY_CLI,
+            CONF_BASE_URL: "http://127.0.0.1:11435/v1",
+            CONF_MODEL: "gemini-3.8-flash-medium",
+        },
+        [],
+    )
+    assert len(res) == 2
+    assert observed_timeouts == [BATCH_REQUEST_TIMEOUT_SECONDS]
