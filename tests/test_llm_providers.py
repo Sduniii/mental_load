@@ -11,6 +11,7 @@ from custom_components.mental_load.const import (
     CONF_BASE_URL,
     CONF_MODEL,
     CONF_PROVIDER,
+    PROVIDER_ANTIGRAVITY_CLI,
     PROVIDER_ANTHROPIC,
     PROVIDER_CUSTOM_OPENAI,
     PROVIDER_GOOGLE,
@@ -187,3 +188,66 @@ async def test_api_failure_falls_back_to_heuristic() -> None:
     assert result.score > 0
     # Heuristic uncovers travel + prep + followup for Kinderarzt with location
     assert len(result.hidden_tasks) >= 2
+
+
+async def test_antigravity_cli_bridge_mode() -> None:
+    session = _FakeSession(
+        _FakeResponse(200, {"choices": [{"message": {"content": SAMPLE_LLM_JSON}}]})
+    )
+    client = LLMProviderClient(hass=None, session=session)
+    result = await client.async_analyze_day(
+        datetime.date(2026, 11, 23),
+        _sample_events(),
+        {},
+        {
+            CONF_PROVIDER: PROVIDER_ANTIGRAVITY_CLI,
+            CONF_BASE_URL: "http://192.168.1.106:11435/v1",
+            CONF_MODEL: "gemini-3.8-flash-medium",
+        },
+        [],
+    )
+    assert result.provider_used == PROVIDER_ANTIGRAVITY_CLI
+    assert session.calls[0]["url"] == "http://192.168.1.106:11435/v1/chat/completions"
+    assert session.calls[0]["json"]["model"] == "gemini-3.8-flash-medium"
+    assert len(result.hidden_tasks) == 1
+
+
+async def test_antigravity_cli_subprocess_mode(monkeypatch: Any) -> None:
+    import asyncio
+    import shutil
+
+    captured_cmd: list[str] = []
+
+    class _FakeProc:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return SAMPLE_LLM_JSON.encode("utf-8"), b""
+
+    async def _fake_exec(*args: str, **kwargs: Any) -> _FakeProc:
+        captured_cmd.extend(args)
+        return _FakeProc()
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/local/bin/agy")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+
+    client = LLMProviderClient(hass=None)
+    result = await client.async_analyze_day(
+        datetime.date(2026, 11, 23),
+        _sample_events(),
+        {},
+        {
+            CONF_PROVIDER: PROVIDER_ANTIGRAVITY_CLI,
+            CONF_MODEL: "gemini-4-argon-medium",
+        },
+        [],
+    )
+    assert result.provider_used == PROVIDER_ANTIGRAVITY_CLI
+    assert captured_cmd[:5] == [
+        "/usr/local/bin/agy",
+        "--print",
+        "--disable-slash-commands",
+        "--model",
+        "gemini-4-argon-medium",
+    ]
+    assert len(result.hidden_tasks) == 1

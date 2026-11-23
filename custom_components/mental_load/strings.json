@@ -13,12 +13,12 @@
       },
       "llm": {
         "title": "KI-Modell & Provider verbinden",
-        "description": "Wähle deinen gewünschten KI-Anbieter (OpenAI, Anthropic, Mistral, Google Gemini, Ollama oder HA Conversation).",
+        "description": "Wähle Antigravity CLI (agy, ohne API-Key) oder einen Cloud-/Lokal-Provider (OpenAI, Anthropic, Mistral, Google Gemini, Ollama, HA Conversation).",
         "data": {
           "provider": "KI-Provider",
-          "api_key": "API-Key (falls erforderlich)",
-          "model": "Modellname (leer = Standardmodell)",
-          "base_url": "Custom Base-URL (optional, z. B. Ollama http://localhost:11434/v1)",
+          "api_key": "API-Key (nicht nötig für Antigravity CLI / Ollama / HA)",
+          "model": "Modellname (leer = Standardmodell, z. B. gemini-3.8-flash-medium)",
+          "base_url": "Bridge- / Custom Base-URL (z. B. http://HOST-IP:11435/v1 für agy-Bridge oder Ollama)",
           "temperature": "Temperatur (Kreativität)"
         }
       },

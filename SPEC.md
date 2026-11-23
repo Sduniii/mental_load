@@ -1,7 +1,7 @@
 # Specification: Home Assistant Mental Load Analyzer (`mental_load`)
 
 ## 1. Objective
-A HACS-compatible Home Assistant custom integration (`mental_load`) that reads calendar events from one or more configured Home Assistant `calendar.*` entities (e.g., Google Calendar), evaluates the daily **Mental Load (0–100%)** using configurable AI models (OpenAI, Anthropic, Mistral, Google Gemini, Ollama/Custom OpenAI-compatible endpoints, or Home Assistant Conversation Agents), uncovers **invisible head-tasks** (preparation, packing, travel/buffer time, follow-up) and surfaces them directly in a dedicated `calendar.mental_load` entity (and optionally in a `todo.*` list and custom Lovelace card), while triggering configurable Smart Home reactions when load thresholds are exceeded.
+A HACS-compatible Home Assistant custom integration (`mental_load`) that reads calendar events from one or more configured Home Assistant `calendar.*` entities (e.g., Google Calendar), evaluates the daily **Mental Load (0–100%)** using configurable AI models (Antigravity CLI `agy`, OpenAI, Anthropic, Mistral, Google Gemini, Ollama/Custom OpenAI-compatible endpoints, or Home Assistant Conversation Agents), uncovers **invisible head-tasks** (preparation, packing, travel/buffer time, follow-up) and surfaces them directly in a dedicated `calendar.mental_load` entity (and optionally in a `todo.*` list and custom Lovelace card), while triggering configurable Smart Home reactions when load thresholds are exceeded.
 
 ## 2. Capability Map
 

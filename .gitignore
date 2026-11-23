@@ -8,3 +8,4 @@ htmlcov/
 venv/
 *.zip
 .DS_Store
+logs/

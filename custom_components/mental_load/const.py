@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "mental_load"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 URL_BASE = "/mental_load_card"
 JSMODULES = [
@@ -14,6 +14,7 @@ JSMODULES = [
 ]
 
 # AI Providers
+PROVIDER_ANTIGRAVITY_CLI = "antigravity_cli"
 PROVIDER_OPENAI = "openai"
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_MISTRAL = "mistral"
@@ -23,6 +24,7 @@ PROVIDER_HA_CONVERSATION = "ha_conversation"
 PROVIDER_HEURISTIC = "heuristic"
 
 ALL_PROVIDERS = [
+    PROVIDER_ANTIGRAVITY_CLI,
     PROVIDER_OPENAI,
     PROVIDER_ANTHROPIC,
     PROVIDER_MISTRAL,
@@ -33,6 +35,7 @@ ALL_PROVIDERS = [
 ]
 
 DEFAULT_MODELS: dict[str, str] = {
+    PROVIDER_ANTIGRAVITY_CLI: "gemini-3.8-flash-medium",
     PROVIDER_OPENAI: "gpt-4o-mini",
     PROVIDER_ANTHROPIC: "claude-3-5-haiku-latest",
     PROVIDER_MISTRAL: "mistral-small-latest",
@@ -61,6 +64,8 @@ CONF_MODEL = "model"
 CONF_BASE_URL = "base_url"
 CONF_TEMPERATURE = "temperature"
 CONF_LANGUAGE = "language"
+CONF_AGY_BINARY = "agy_binary"
+DEFAULT_AGY_BINARY = "agy"
 
 # 5 Factors & Personal Profile
 CONF_USER_PROFILE = "user_profile"

@@ -4,7 +4,21 @@ Eine HACS-kompatible Home-Assistant-Integration (`mental_load`), die Kalenderein
 
 ## Features
 
-- **Multi-LLM Support:** OpenAI (`gpt-4o-mini`, `gpt-4o`, ...), Anthropic (`claude-3-5-haiku-latest`, `claude-3-7-sonnet-latest`, ...), Mistral (`mistral-small-latest`, `mistral-large-latest`), Google Gemini (`gemini-2.0-flash`, ...), Ollama / Custom OpenAI-URLs (`http://localhost:11434/v1`), Home Assistant Conversation Agents sowie eine Offline-Heuristik als Fallback.
+- **Multi-LLM Support (inkl. ohne API-Key!):**
+  - **Antigravity CLI (`agy`)**: Nutzt deine bestehende Antigravity-Session (`gemini-3.8-flash-medium`, `gemini-4-argon-medium`, `claude-sonnet-5-5-medium`, `claude-opus-5-5-high`, `gpt-oss-120b-medium`) – **kein separater API-Key nötig!** Läuft entweder direkt lokal über `agy --print` oder bei HAOS-VMs über die mitgelieferte Bridge `tools/agy_bridge_server.py`.
+  - **Cloud & Lokal:** OpenAI (`gpt-4o-mini`, `gpt-4o`, ...), Anthropic (`claude-3-5-haiku-latest`, `claude-3-7-sonnet-latest`, ...), Mistral (`mistral-small-latest`, `mistral-large-latest`), Google Gemini (`gemini-2.0-flash`, ...), Ollama / Custom OpenAI-URLs (`http://localhost:11434/v1`), Home Assistant Conversation Agents sowie eine Offline-Heuristik als Fallback.
+
+## Antigravity CLI Bridge starten (für HAOS / Docker)
+
+Wenn dein Home Assistant auf einer separaten VM (z. B. Home Assistant OS) läuft, starte die mitgelieferte Bridge auf dem Rechner, auf dem `agy` eingeloggt ist:
+
+```bash
+python3 tools/agy_bridge_server.py --host 0.0.0.0 --port 11435
+# Oder dauerhaft als systemd-User-Service:
+python3 tools/agy_bridge_server.py --install-systemd-user
+```
+
+In Home Assistant wählst du dann als Provider **Antigravity CLI (agy – kein API-Key nötig)** und trägst als Base-URL `http://<IP-deines-Rechners>:11435/v1` ein.
 - **Sichtbar direkt im HA-Kalender (`calendar.mental_load`):**
   - Ganztages-Badge pro Tag (`🟢 25%`, `🟡 52%`, `🟠 76%`, `🔴 91%`) inklusive 5-Faktoren-Analyse im Popup.
   - Zeitlich vor und nach deinen Terminen platzierte Blöcke für unsichtbare Aufgaben (`🧠 Vorbereitung`, `🚗 Fahrt & Puffer`, `🎒 Einpacken`, `📝 Nachbereitung`) inklusive Checkliste.

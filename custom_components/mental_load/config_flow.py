@@ -54,6 +54,7 @@ from .const import (
     DEFAULT_USER_PROFILE,
     DEFAULT_WARNING_THRESHOLD,
     DOMAIN,
+    PROVIDER_ANTIGRAVITY_CLI,
     PROVIDER_ANTHROPIC,
     PROVIDER_CUSTOM_OPENAI,
     PROVIDER_GOOGLE,
@@ -64,6 +65,7 @@ from .const import (
 )
 
 PROVIDER_OPTIONS = [
+    selector.SelectOptionDict(value=PROVIDER_ANTIGRAVITY_CLI, label="Antigravity CLI (agy – kein API-Key nötig)"),
     selector.SelectOptionDict(value=PROVIDER_OPENAI, label="OpenAI (GPT-4o / o3-mini)"),
     selector.SelectOptionDict(value=PROVIDER_ANTHROPIC, label="Anthropic (Claude)"),
     selector.SelectOptionDict(value=PROVIDER_MISTRAL, label="Mistral AI"),
@@ -140,7 +142,7 @@ class MentalLoadConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_PROVIDER, default=PROVIDER_OPENAI): selector.SelectSelector(
+                vol.Required(CONF_PROVIDER, default=PROVIDER_ANTIGRAVITY_CLI): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=PROVIDER_OPTIONS,
                         mode=selector.SelectSelectorMode.DROPDOWN,

@@ -13,12 +13,12 @@
       },
       "llm": {
         "title": "Connect AI Model & Provider",
-        "description": "Choose your preferred AI provider (OpenAI, Anthropic, Mistral, Google Gemini, Ollama, or HA Conversation).",
+        "description": "Choose Antigravity CLI (agy, no API key needed) or another provider (OpenAI, Anthropic, Mistral, Google Gemini, Ollama, HA Conversation).",
         "data": {
           "provider": "AI Provider",
-          "api_key": "API Key (if required)",
-          "model": "Model Name (empty = default)",
-          "base_url": "Custom Base URL (optional, e.g. Ollama http://localhost:11434/v1)",
+          "api_key": "API Key (not needed for Antigravity CLI / Ollama / HA)",
+          "model": "Model Name (empty = default, e.g. gemini-3.8-flash-medium)",
+          "base_url": "Bridge / Custom Base URL (e.g. http://HOST-IP:11435/v1 for agy bridge or Ollama)",
           "temperature": "Temperature"
         }
       },

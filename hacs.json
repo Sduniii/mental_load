@@ -1,7 +1,5 @@
 {
   "name": "Mental Load Calendar Analyzer",
-  "content_in_root": false,
-  "filename": "mental_load",
   "render_readme": true,
   "homeassistant": "2024.8.0"
 }

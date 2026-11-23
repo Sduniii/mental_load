@@ -4,7 +4,7 @@ Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Mod
 
 ## Highlights
 
-- **Multi-LLM Support:** OpenAI, Anthropic, Mistral, Google Gemini, Ollama / Custom OpenAI URLs, Home Assistant Conversation Agent sowie lokale Offline-Heuristik als Fallback.
+- **Multi-LLM Support (inkl. ohne API-Key):** **Antigravity CLI (`agy`)** (direkt oder über `tools/agy_bridge_server.py`), OpenAI, Anthropic, Mistral, Google Gemini, Ollama / Custom OpenAI URLs, Home Assistant Conversation Agent sowie lokale Offline-Heuristik als Fallback.
 - **Direkt im HA-Kalender (`calendar.mental_load`):**
   - Ganztages-Badges (`🟢`/`🟡`/`🟠`/`🔴` + Score & Kurzbegründung)
   - Zeitlich vor & nach Terminen platzierte Blöcke (`🧠 Vorbereitung`, `🚗 Fahrt & Puffer`, `🎒 Einpacken`, `📝 Nachbereitung`) mit Checklisten

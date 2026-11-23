@@ -4,17 +4,22 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
+import shutil
 from typing import Any
 
 from .const import (
+    CONF_AGY_BINARY,
     CONF_API_KEY,
     CONF_BASE_URL,
     CONF_MODEL,
     CONF_PROVIDER,
     CONF_TEMPERATURE,
+    DEFAULT_AGY_BINARY,
     DEFAULT_BASE_URLS,
     DEFAULT_MODELS,
     DEFAULT_TEMPERATURE,
+    PROVIDER_ANTIGRAVITY_CLI,
     PROVIDER_ANTHROPIC,
     PROVIDER_CUSTOM_OPENAI,
     PROVIDER_GOOGLE,
@@ -120,6 +125,16 @@ class LLMProviderClient:
         temperature = float(config.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE))
         base_url = str(config.get(CONF_BASE_URL) or DEFAULT_BASE_URLS.get(provider, "")).rstrip("/")
 
+        if provider == PROVIDER_ANTIGRAVITY_CLI:
+            return await self._call_antigravity_cli(
+                base_url=base_url,
+                api_key=api_key,
+                model=model or DEFAULT_MODELS[PROVIDER_ANTIGRAVITY_CLI],
+                temperature=temperature,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                config=config,
+            )
         if provider in (PROVIDER_OPENAI, PROVIDER_MISTRAL, PROVIDER_CUSTOM_OPENAI):
             return await self._call_openai_compatible(
                 provider=provider,
@@ -271,6 +286,71 @@ class LLMProviderClient:
             return "".join(str(p.get("text", "")) for p in parts)
         except (KeyError, IndexError, TypeError) as err:
             raise LLMProviderError(f"Malformed Google Gemini response: {err}") from err
+
+    async def _call_antigravity_cli(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        temperature: float,
+        system_prompt: str,
+        user_prompt: str,
+        config: dict[str, Any],
+    ) -> str:
+        """Call Antigravity CLI (`agy`) either via HTTP bridge or local subprocess."""
+        if base_url:
+            return await self._call_openai_compatible(
+                provider=PROVIDER_ANTIGRAVITY_CLI,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                temperature=temperature,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+
+        configured_bin = str(config.get(CONF_AGY_BINARY) or DEFAULT_AGY_BINARY).strip()
+        agy_bin = shutil.which(configured_bin)
+        if not agy_bin and os.path.isfile(configured_bin) and os.access(configured_bin, os.X_OK):
+            agy_bin = configured_bin
+        if not agy_bin:
+            fallback_path = os.path.expanduser("~/.local/bin/agy")
+            if os.path.isfile(fallback_path) and os.access(fallback_path, os.X_OK):
+                agy_bin = fallback_path
+        if not agy_bin:
+            raise LLMProviderError(
+                "Antigravity CLI binary 'agy' not found locally; set Bridge Base-URL (e.g. http://<host>:11435/v1)"
+            )
+
+        combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+        cmd = [
+            agy_bin,
+            "--print",
+            "--disable-slash-commands",
+            "--model",
+            model,
+            combined_prompt,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=REQUEST_TIMEOUT_SECONDS * 2)
+        except TimeoutError as err:
+            proc.kill()
+            await proc.wait()
+            raise LLMProviderError("Antigravity CLI timed out") from err
+
+        if proc.returncode != 0:
+            err_msg = stderr.decode("utf-8", errors="replace").strip()
+            raise LLMProviderError(f"agy exited with code {proc.returncode}: {err_msg[:200]}")
+
+        output = stdout.decode("utf-8", errors="replace").strip()
+        if not output:
+            raise LLMProviderError("Antigravity CLI returned empty output")
+        return output
 
     async def _call_ha_conversation(
         self,
