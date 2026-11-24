@@ -2,6 +2,13 @@
 
 Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Modell deiner Wahl, berechne den täglichen **Mental Load (0–100%)**, mache **unsichtbare Kopf-Aufgaben** direkt in `calendar.mental_load` sichtbar und löse aktive Smart-Home-Reaktionen aus.
 
+## Neu in v1.9.x
+
+- ⚡ **75–90% weniger Tokens & Multi-Day-Batching:** Stabile Cache-Fingerprints, 0-Token Fast-Path für leere Tage, gebündelte Batch-Analyse (`4` Tage bei `antigravity_cli`, `7` Tage bei Cloud-APIs) sowie Anthropic System-Prompt-Caching.
+- 🚀 **Non-Blocking Startup & Boot-Cache-Schutz:** Sofortiger Start aus dem gespeicherten Cache, frischer Abruf erst nach `EVENT_HOMEASSISTANT_STARTED`, `120s`-Timeout für Batches/Projekt-Breakdown und automatischer To-Do-Fallback (`due_datetime` → `due_date`).
+- 🔁 **Selbstheilender Kalender-Sync (`calendar.mental_load_2`):** Gleicht gegen tatsächlich vorhandene Kalender-Einträge ab und stellt fehlende oder geänderte Tages-Badges automatisch wieder her.
+- 🎒 **Kalender-Tags (`#no-prep`) & Sonntags-Turnbeutel-Bündelung:** `#no-prep` / `[ML:no-prep]` / `#kein-packen` unterdrücken unerwünschte Aufgaben direkt im Termin; Schulsport (`Sport`/`Turnen`) wird einmalig sonntags um `17:30` gebündelt statt täglich an Werktags-Vorabenden.
+
 ## Neu in v1.8.0
 
 - 🎒 **Kinder- & Stundenplan-Kalender:** Zusätzliche Kalender (z. B. Schul-Stundenplan) rein lesend anbinden — Schulstunden erzeugen keinen eigenen Terminstress, aber Sport-/Schwimm-/Ausflugs-Checklisten und Logistik werden automatisch berücksichtigt.
