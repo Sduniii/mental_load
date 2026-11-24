@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.2] — 2026-11-24
+
+### Fixed
+- **Self-Healing External Calendar Sync (`async_sync_to_external_calendar`):** Reconciles against actual live `[ML-BADGE-*]` and `[ML-TASK-*]` events returned by `calendar.get_events` (including dict-style `start` dates and summary-hashed dedup keys), automatically recreating missing days or badges whose summary changed at the same percentage score and pruning duplicates.
+
+---
+
 ## [1.9.1] — 2026-11-23
 
 ### Fixed

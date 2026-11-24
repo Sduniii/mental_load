@@ -855,3 +855,76 @@ async def test_push_hidden_tasks_falls_back_from_due_datetime_to_due_date() -> N
     assert "due_datetime" in seen_payloads[0]
     assert seen_payloads[1]["due_date"] == "2026-11-23"
     assert "due_datetime" not in seen_payloads[1]
+
+
+async def test_external_calendar_sync_heals_missing_and_same_score_updated_badges() -> None:
+    from custom_components.mental_load.models import DayLoadAnalysis
+
+    hass = FakeHass()
+    d1 = datetime.date(2026, 11, 26)
+    d2 = datetime.date(2026, 11, 27)
+
+    new_d1 = DayLoadAnalysis(
+        date=d1,
+        score=47,
+        level="medium",
+        badge_summary="🟡 47% Mental Load (Mittel) – Neue Zusammenfassung, 1 Kopf-Aufgabe",
+        reasoning="Updated reasoning",
+        factor_breakdown={},
+    )
+    new_d2 = DayLoadAnalysis(
+        date=d2,
+        score=45,
+        level="medium",
+        badge_summary="🟡 45% Mental Load (Mittel) – Adventsbasteln, 3 Kopf-Aufgaben",
+        reasoning="Day 2 reasoning",
+        factor_breakdown={},
+    )
+
+    def _cal_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get("entity_id") == "calendar.mental_load_2":
+            return {
+                "calendar.mental_load_2": {
+                    "events": [
+                        {
+                            "summary": "🟡 47% Mental Load (Mittel) – Alte Zusammenfassung, 0 Kopf-Aufgaben",
+                            "start": {"date": d1.isoformat()},
+                            "end": {"date": (d1 + datetime.timedelta(days=1)).isoformat()},
+                            "description": f"Veraltet\n\n[ML-BADGE-{d1.isoformat()}]",
+                        }
+                    ]
+                }
+            }
+        return {}
+
+    hass.services.set_response("calendar", "get_events", _cal_handler)
+
+    entry = ConfigEntry(
+        entry_id="heal_sync_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google_source"],
+            CONF_HORIZON_DAYS: 2,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_AUTO_SYNC_CALENDAR: True,
+            CONF_TARGET_CALENDAR_ENTITY: "calendar.mental_load_2",
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    coord.data = {d1.isoformat(): new_d1, d2.isoformat(): new_d2}
+    # Simulate stale markers that previously caused deleted/missing badges to stay skipped
+    coord._synced_calendar_uids = {
+        f"badge:calendar.mental_load_2:{d1.isoformat()}:47",
+        f"badge:calendar.mental_load_2:{d2.isoformat()}:45",
+    }
+
+    await coord.async_sync_to_external_calendar("calendar.mental_load_2")
+
+    delete_calls = [c for c in hass.services.calls if c[0] == "calendar" and c[1] == "delete_event"]
+    create_calls = [c for c in hass.services.calls if c[0] == "calendar" and c[1] == "create_event"]
+    assert {c[2]["summary"] for c in delete_calls} == {
+        "🟡 47% Mental Load (Mittel) – Alte Zusammenfassung, 0 Kopf-Aufgaben"
+    }
+    assert {c[2]["summary"] for c in create_calls} == {
+        new_d1.badge_summary,
+        new_d2.badge_summary,
+    }

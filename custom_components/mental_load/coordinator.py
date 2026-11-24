@@ -1080,11 +1080,20 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             return 0
 
         source_map = analyses if analyses is not None else (self.data or {})
-        synced_count = await self._async_cleanup_stale_external_events(target_cal, source_map)
+        synced_count, present_badges, present_task_uids = await self._async_cleanup_stale_external_events(
+            target_cal, source_map
+        )
 
         for day in sorted(source_map.values(), key=lambda d: d.date):
-            badge_key = f"badge:{target_cal}:{day.date.isoformat()}:{day.score}"
-            if badge_key not in self._synced_calendar_uids:
+            badge_hash = hashlib.sha256(day.badge_summary.encode("utf-8")).hexdigest()[:8]
+            badge_key = f"badge:{target_cal}:{day.date.isoformat()}:{day.score}:{badge_hash}"
+            badge_key_tuple = (day.date.isoformat(), day.badge_summary)
+            badge_already_present = (
+                badge_key_tuple in present_badges
+                if present_badges is not None
+                else badge_key in self._synced_calendar_uids
+            )
+            if not badge_already_present:
                 try:
                     await self.hass.services.async_call(
                         "calendar",
@@ -1099,13 +1108,20 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                         blocking=True,
                     )
                     self._synced_calendar_uids.add(badge_key)
+                    if present_badges is not None:
+                        present_badges.add(badge_key_tuple)
                     synced_count += 1
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.error("Failed syncing day badge to %s: %s", target_cal, err)
 
             for task in day.hidden_tasks:
                 task_key = f"task:{target_cal}:{task.uid}"
-                if task_key in self._synced_calendar_uids:
+                task_already_present = (
+                    task.uid in present_task_uids
+                    if present_task_uids is not None
+                    else task_key in self._synced_calendar_uids
+                )
+                if task_already_present:
                     continue
                 checklist_lines = "\n".join(f"- [ ] {step}" for step in task.checklist)
                 desc = (
@@ -1130,6 +1146,8 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                         blocking=True,
                     )
                     self._synced_calendar_uids.add(task_key)
+                    if present_task_uids is not None:
+                        present_task_uids.add(task.uid)
                     synced_count += 1
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.error("Failed syncing hidden task '%s' to %s: %s", task.title, target_cal, err)
@@ -1142,10 +1160,10 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self,
         target_cal: str,
         source_map: dict[str, DayLoadAnalysis],
-    ) -> int:
-        """Delete outdated [ML-BADGE-*] and [ML-TASK-*] events from target_cal."""
+    ) -> tuple[int, set[tuple[str, str]] | None, set[str] | None]:
+        """Delete outdated/duplicate [ML-BADGE-*]/[ML-TASK-*] events and return valid live events."""
         if not source_map:
-            return 0
+            return 0, None, None
         days = sorted(d.date for d in source_map.values())
         tz = dt_util.now().tzinfo
         start_dt = datetime.datetime.combine(days[0], datetime.time.min, tzinfo=tz)
@@ -1164,28 +1182,39 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                 return_response=True,
             )
         except Exception:  # noqa: BLE001
-            return 0
+            return 0, None, None
 
-        if not isinstance(resp, dict):
-            return 0
+        if not isinstance(resp, dict) or target_cal not in resp:
+            return 0, None, None
 
         expected_badges = {(d.date.isoformat(), d.badge_summary) for d in source_map.values()}
         expected_task_uids = {t.uid for d in source_map.values() for t in d.hidden_tasks}
+        present_badges: set[tuple[str, str]] = set()
+        present_task_uids: set[str] = set()
         deleted = 0
 
         events = (resp.get(target_cal) or {}).get("events", [])
         for ev in events:
             desc = str(ev.get("description") or "")
             summary = str(ev.get("summary") or "")
-            raw_start = str(ev.get("start") or "")
-            date_part = raw_start[:10]
+            raw_start = ev.get("start") or ""
+            if isinstance(raw_start, dict):
+                raw_start = raw_start.get("date") or raw_start.get("dateTime") or ""
+            date_part = str(raw_start)[:10]
             is_stale = False
 
             if "[ML-BADGE-" in desc:
-                is_stale = (date_part, summary) not in expected_badges
+                badge_pair = (date_part, summary)
+                if badge_pair in expected_badges and badge_pair not in present_badges:
+                    present_badges.add(badge_pair)
+                else:
+                    is_stale = True
             elif "[ML-TASK-" in desc:
                 uid_part = desc.split("[ML-TASK-", 1)[1].split("]", 1)[0]
-                is_stale = uid_part not in expected_task_uids
+                if uid_part in expected_task_uids and uid_part not in present_task_uids:
+                    present_task_uids.add(uid_part)
+                else:
+                    is_stale = True
 
             if not is_stale or len(date_part) != 10:
                 continue
@@ -1212,7 +1241,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Could not delete stale event '%s' from %s: %s", summary, target_cal, err)
 
-        return deleted
+        return deleted, present_badges, present_task_uids
 
     async def _async_evaluate_reactions(
         self,
