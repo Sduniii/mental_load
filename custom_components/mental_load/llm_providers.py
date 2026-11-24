@@ -226,6 +226,7 @@ class LLMProviderClient:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 config=config,
+                timeout_seconds=BATCH_REQUEST_TIMEOUT_SECONDS,
             )
             parsed = parse_project_breakdown_response(raw_response, config, project_items=project_items)
             return parsed or decompose_project_todos_heuristic(project_items, config)

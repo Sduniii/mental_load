@@ -198,8 +198,8 @@ def test_children_profiles_age_and_timetable_handling() -> None:
     assert "Children & School Timetable Context" in sys_prompt
     assert "calendar.stundenplan_kind" in sys_prompt
     assert "age **8 Jahre**" in sys_prompt
-    assert len(sys_prompt) < 2250
-    assert len(build_system_prompt({}, [])) < 1600
+    assert len(sys_prompt) < 2350
+    assert len(build_system_prompt({}, [])) < 1700
 
     usr_prompt = build_day_user_prompt(ref, [], {}, cfg)
     assert "Children & School Timetable Context" not in usr_prompt
@@ -231,9 +231,81 @@ def test_children_profiles_age_and_timetable_handling() -> None:
             source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
         ),
     ]
+    school_events.append(
+        CalendarEventInput(
+            uid="s4",
+            summary="Schwimmen",
+            start=datetime.datetime(2026, 11, 23, 10, 15, tzinfo=tz),
+            end=datetime.datetime(2026, 11, 23, 11, 0, tzinfo=tz),
+            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+        )
+    )
     school_only = analyze_day_heuristic(ref, school_events, {}, cfg)
     assert school_only.factor_breakdown[FACTOR_PACING] < 15
-    assert any("Schulsachen packen" in t.title and "Sportunterricht" in t.title for t in school_only.hidden_tasks)
+    assert any("Schulsachen packen" in t.title and "Schwimmen" in t.title for t in school_only.hidden_tasks)
+    assert not any("Sportunterricht" in t.parent_event_summary for t in school_only.hidden_tasks)
+
+
+def test_no_prep_tags_suppress_hidden_tasks_in_prompt_parser_and_heuristic() -> None:
+    import json
+
+    ref = datetime.date(2026, 11, 24)
+    tz = datetime.timezone(datetime.timedelta(hours=1))
+    ev = CalendarEventInput(
+        uid="np1",
+        summary="Sportunterricht",
+        start=datetime.datetime(2026, 11, 24, 9, 0, tzinfo=tz),
+        end=datetime.datetime(2026, 11, 24, 10, 0, tzinfo=tz),
+        description="Halle Nord #no-prep",
+        source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+    )
+    ev2 = CalendarEventInput(
+        uid="np2",
+        summary="Elternabend #kein-packen",
+        start=datetime.datetime(2026, 11, 24, 19, 0, tzinfo=tz),
+        end=datetime.datetime(2026, 11, 24, 20, 0, tzinfo=tz),
+        source_calendar="calendar.google",
+    )
+
+    usr_prompt = build_day_user_prompt(ref, [ev, ev2], {}, {})
+    assert "[NO-PREP]" in usr_prompt
+
+    heur = analyze_day_heuristic(ref, [ev, ev2], {}, {})
+    assert heur.hidden_tasks == []
+
+    llm_raw = json.dumps(
+        {
+            "score": 40,
+            "top_stressor": "Abend",
+            "reasoning": "Test",
+            "factor_breakdown": {"pacing_context": 20, "social_battery": 40, "mobility": 20, "ha_context": 10, "hidden_work": 30},
+            "hidden_tasks": [
+                {
+                    "parent_event_summary": "Sportunterricht",
+                    "title": "Turnbeutel packen",
+                    "category": "packing",
+                    "offset_type": "before",
+                    "offset_minutes": 15,
+                    "duration_minutes": 15,
+                    "load_contribution": 10,
+                    "checklist": [],
+                },
+                {
+                    "parent_event_summary": "Elternabend #kein-packen",
+                    "title": "Vorbereiten",
+                    "category": "prep",
+                    "offset_type": "before",
+                    "offset_minutes": 15,
+                    "duration_minutes": 15,
+                    "load_contribution": 10,
+                    "checklist": [],
+                },
+            ],
+            "recommendations": [],
+        }
+    )
+    parsed = parse_llm_day_response(llm_raw, ref, [ev, ev2], {}, "openai")
+    assert parsed.hidden_tasks == []
 
 
 def test_batch_prompt_and_parser_roundtrip() -> None:

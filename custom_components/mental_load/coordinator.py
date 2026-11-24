@@ -71,6 +71,7 @@ from .prompt_builder import (
     _make_task_uid,
     analyze_day_heuristic,
     compute_project_baseline,
+    event_has_no_prep_tag,
     extract_todo_priority,
     get_factor_weights,
     infer_step_sunday_restrictions,
@@ -149,6 +150,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self._last_open_project_count: int = 0
         self._last_open_project_items: list[dict[str, Any]] = []
         self._last_day_event_counts: dict[str, int] = {}
+        self._last_calendar_fetch_failed: bool = False
 
     @property
     def merged_config(self) -> dict[str, Any]:
@@ -245,6 +247,13 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         )
 
         events_by_day = await self._async_fetch_events_by_day(start_dt, end_dt, horizon, today, tz)
+        if self._last_calendar_fetch_failed:
+            if self.data:
+                _LOGGER.warning("Keeping existing mental_load data after failed calendar fetch")
+                return self.data
+            if await self.async_seed_from_cache():
+                _LOGGER.warning("Restored cached mental_load data after failed calendar fetch")
+                return self.data
         ha_context = await self._async_collect_ha_context(config)
         self._last_day_event_counts = {d_key: len(evs) for d_key, evs in events_by_day.items()}
         self._last_open_project_count = int(ha_context.get("open_todos_count", len(ha_context.get("open_todos", []))))
@@ -348,6 +357,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         for stale_key in [k for k in self._cache if k < cutoff]:
             self._cache.pop(stale_key, None)
 
+        self._apply_weekly_sport_bag_bundling(results, events_by_day, config, tz)
         self._raw_analyses = results
         results = self._rebalance_and_score_horizon(
             results,
@@ -411,6 +421,110 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             "energy_sensor": energy_bucket,
             "weather": weather_cond,
         }
+
+    def _apply_weekly_sport_bag_bundling(
+        self,
+        results: dict[str, DayLoadAnalysis],
+        events_by_day: dict[str, list[CalendarEventInput]],
+        config: dict[str, Any],
+        tz: datetime.tzinfo | None,
+    ) -> None:
+        """Replace weekday school gym-bag packing tasks with one bundled Sunday reminder."""
+        def _is_child_sport_event(ev: CalendarEventInput) -> bool:
+            src = ev.source_calendar.lower()
+            if "[stundenplan/kind]" not in src and not src.startswith("child:"):
+                return False
+            if event_has_no_prep_tag(ev):
+                return False
+            txt = f"{ev.summary} {ev.description}".lower()
+            return ("sport" in txt or "turnen" in txt) and "schwimm" not in txt
+
+        def _is_gym_bag_text(text: str) -> bool:
+            low = text.lower()
+            return any(k in low for k in ("turnbeutel", "sportbeutel", "sportsachen", "gym bag"))
+
+        has_any_child_sport = any(
+            _is_child_sport_event(ev)
+            for day_evs in events_by_day.values()
+            for ev in day_evs
+        )
+        if not has_any_child_sport:
+            return
+
+        language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
+        is_de = language.startswith("de")
+
+        for day_str, day in results.items():
+            if day.date.weekday() == 6:
+                continue
+            filtered_tasks: list[HiddenTask] = []
+            for t in day.hidden_tasks:
+                if t.category == "packing" and (
+                    _is_gym_bag_text(f"{t.title} {t.parent_event_summary}")
+                    or (
+                        "sport" in t.parent_event_summary.lower()
+                        and "schwimm" not in f"{t.title} {t.parent_event_summary}".lower()
+                    )
+                ):
+                    continue
+                filtered_tasks.append(t)
+            day.hidden_tasks = filtered_tasks
+
+        for day_str, day in results.items():
+            if day.date.weekday() != 6:
+                continue
+            next_week_has_sport = any(
+                _is_child_sport_event(ev)
+                for offset in range(1, 6)
+                for ev in events_by_day.get((day.date + datetime.timedelta(days=offset)).isoformat(), [])
+            )
+            if not next_week_has_sport:
+                continue
+
+            sunday_events = events_by_day.get(day_str, [])
+            already_scheduled = any(
+                _is_gym_bag_text(f"{ev.summary} {ev.description}") for ev in sunday_events
+            ) or any(
+                _is_gym_bag_text(f"{t.title} {t.parent_event_summary}") for t in day.hidden_tasks
+            )
+            if already_scheduled:
+                continue
+
+            start_dt = datetime.datetime.combine(day.date, datetime.time(17, 30), tzinfo=tz)
+            end_dt = datetime.datetime.combine(day.date, datetime.time(17, 45), tzinfo=tz)
+            title = (
+                "🎒 Einpacken: Turnbeutel für die ganze Woche packen"
+                if is_de
+                else "🎒 Packing: Pack gym bag for the whole week"
+            )
+            parent_summary = "Schulsport (Woche)" if is_de else "School sports (week)"
+            checklist = (
+                [
+                    "Sportsachen & Hallenschuhe kontrollieren",
+                    "Turnbeutel für die gesamte Schulwoche bereitlegen",
+                ]
+                if is_de
+                else [
+                    "Check gym clothes & indoor shoes",
+                    "Pack gym bag for the school week",
+                ]
+            )
+            day.hidden_tasks.append(
+                HiddenTask(
+                    uid=_make_task_uid(day.date, parent_summary, title, "packing"),
+                    parent_event_summary=parent_summary,
+                    title=title,
+                    category="packing",
+                    start=start_dt,
+                    end=end_dt,
+                    load_contribution=8,
+                    checklist=checklist,
+                    parent_event_date=day_str,
+                    scheduled_date=day_str,
+                    lead_days=0,
+                    placement_mode="same_day",
+                )
+            )
 
     def _compute_day_fingerprint(
         self,
@@ -508,6 +622,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         buckets: dict[str, list[CalendarEventInput]] = {
             (today + datetime.timedelta(days=i)).isoformat(): [] for i in range(horizon)
         }
+        self._last_calendar_fetch_failed = False
         if not calendars:
             return buckets
 
@@ -525,9 +640,11 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.error("Failed to fetch events from %s: %s", calendars, err)
+            self._last_calendar_fetch_failed = True
             return buckets
 
         if not isinstance(response, dict):
+            self._last_calendar_fetch_failed = True
             return buckets
 
         for cal_id, cal_payload in response.items():

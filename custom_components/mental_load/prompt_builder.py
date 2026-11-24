@@ -433,6 +433,15 @@ def parse_children_profiles(
     return children
 
 
+NO_PREP_TAGS = ("#no-prep", "[ml:no-prep]", "#noprep", "#kein-packen")
+
+
+def event_has_no_prep_tag(event: CalendarEventInput) -> bool:
+    """Return True if event summary or description carries a no-prep suppression tag."""
+    haystack = f"{event.summary} {event.description}".lower()
+    return any(tag in haystack for tag in NO_PREP_TAGS)
+
+
 def format_children_context_block(
     config: dict[str, Any],
     target_date: datetime.date | None = None,
@@ -461,8 +470,7 @@ def format_children_context_block(
     if child_cals:
         lines.append(
             f"- Child calendars ({', '.join(child_cals)}) are tagged `[Stundenplan/Kind]`: "
-            "do NOT score consecutive school lessons as parent context-switching; only extract age-appropriate "
-            "drop-off/pick-up logistics, schedule changes (Ausfall/Elternabend), and evening-before packing (Sport/Schwimmen/Ausflug)."
+            "do NOT score consecutive school lessons as parent context-switching and do NOT create weekday evening-before gym-bag packing tasks for regular school Sport/Turnen (bundled once on Sunday instead). Only extract age-appropriate drop-off/pick-up logistics, schedule changes (Ausfall/Elternabend), and evening-before packing for special events (Schwimmen/Ausflug)."
         )
     return "\n".join(lines)
 
@@ -542,6 +550,7 @@ def build_system_prompt(
         f"3. `{FACTOR_MOBILITY}` (weight {weights[FACTOR_MOBILITY]:.2f}x): travel, location changes, bad weather\n"
         f"4. `{FACTOR_HA_CONTEXT}` (weight {weights[FACTOR_HA_CONTEXT]:.2f}x): open todos, low energy/recovery, harsh weather\n"
         f"5. `{FACTOR_HIDDEN_WORK}` (weight {weights[FACTOR_HIDDEN_WORK]:.2f}x): docs, gifts, packing, prep, follow-up\n"
+        "Events tagged [NO-PREP] (or #no-prep/#kein-packen): NEVER create hidden tasks for them.\n"
         f"Task defaults: prep={prep_min}m, travel={travel_min}m, followup={followup_min}m.{feedback_section}\n"
         f"{output_contract}"
     )
@@ -565,7 +574,8 @@ def _format_compact_day_block(
             loc = f" @{ev.location}" if ev.location else ""
             desc = f" | {ev.description[:120]}" if ev.description else ""
             src = " [Stundenplan/Kind]" if "[stundenplan/kind]" in ev.source_calendar.lower() else ""
-            lines.append(f"{idx}. [{time_str}] {ev.summary}{loc}{desc}{src}")
+            no_prep = " [NO-PREP]" if event_has_no_prep_tag(ev) else ""
+            lines.append(f"{idx}. [{time_str}] {ev.summary}{loc}{desc}{src}{no_prep}")
         events_text = "\n".join(lines)
 
     parts = [f"Date: {target_date.isoformat()} ({weekday})", events_text]
@@ -777,6 +787,11 @@ def _parse_day_payload(
     else:
         score = max(0, min(100, int(payload.get("score", 0))))
 
+    no_prep_summaries = {
+        ev.summary.strip().lower()
+        for ev in events
+        if event_has_no_prep_tag(ev) and ev.summary.strip()
+    }
     hidden_tasks: list[HiddenTask] = []
     for item in payload.get("hidden_tasks", []) or []:
         if not isinstance(item, dict):
@@ -785,6 +800,9 @@ def _parse_day_payload(
         if category not in CATEGORY_PREFIXES:
             category = "prep"
         parent_summary = str(item.get("parent_event_summary", "")).strip()
+        p_lower = parent_summary.lower()
+        if p_lower and any(p_lower == np_sum or np_sum in p_lower or p_lower in np_sum for np_sum in no_prep_summaries):
+            continue
         title = _format_task_title(str(item.get("title", "Vorbereitung")), category)
         start_dt, end_dt = _resolve_task_window(item, target_date, events, config, tzinfo)
         checklist = [str(c).strip() for c in (item.get("checklist") or []) if str(c).strip()]
@@ -969,13 +987,15 @@ def analyze_day_heuristic(
     # Uncover Hidden Tasks (Factor 5)
     hidden_tasks: list[HiddenTask] = []
     for ev in sorted_events:
+        if event_has_no_prep_tag(ev):
+            continue
         text = f"{ev.summary} {ev.description}".lower()
         is_child_cal = "[stundenplan/kind]" in ev.source_calendar.lower() or ev.source_calendar.lower().startswith("child:")
         ev_start = ev.start if not ev.all_day else datetime.datetime.combine(target_date, datetime.time(8, 30), tzinfo=tzinfo)
         ev_end = ev.end if not ev.all_day else datetime.datetime.combine(target_date, datetime.time(9, 0), tzinfo=tzinfo)
 
         if is_child_cal:
-            needs_bag = any(k in text for k in ("sport", "schwimm", "turnen", "ausflug", "wandertag", "verkleid", "fasching"))
+            needs_bag = any(k in text for k in ("schwimm", "ausflug", "wandertag", "verkleid", "fasching"))
             is_special_child = any(k in text for k in ("eltern", "schulfest", "ferien", "ausfall", "entfall", "früh", "klassenarbeit"))
             if needs_bag:
                 bag_title = f"🎒 Schulsachen packen: {ev.summary}" if is_de else f"🎒 Pack school bag: {ev.summary}"

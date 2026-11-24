@@ -396,3 +396,43 @@ async def test_batch_request_uses_extended_timeout_and_formats_empty_timeout(
     )
     assert len(res) == 2
     assert observed_timeouts == [BATCH_REQUEST_TIMEOUT_SECONDS]
+
+    observed_timeouts.clear()
+    breakdown_session = _FakeSession(
+        _FakeResponse(
+            200,
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "steps": [
+                                        {
+                                            "parent_todo": "Zaun streichen",
+                                            "title": "🔧 Etappe: Zaun vorbereiten",
+                                            "duration_minutes": 30,
+                                            "checklist": ["Pinsel holen"],
+                                            "requires_open_business": False,
+                                            "is_noisy": False,
+                                        }
+                                    ]
+                                }
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+    )
+    breakdown_client = LLMProviderClient(hass=None, session=breakdown_session)
+    steps = await breakdown_client.async_breakdown_projects(
+        [{"summary": "Zaun streichen", "description": "Garten"}],
+        {
+            CONF_PROVIDER: PROVIDER_ANTIGRAVITY_CLI,
+            CONF_BASE_URL: "http://127.0.0.1:11435/v1",
+            CONF_MODEL: "gemini-3.8-flash-medium",
+        },
+    )
+    assert len(steps) == 1
+    assert observed_timeouts == [BATCH_REQUEST_TIMEOUT_SECONDS]

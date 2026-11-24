@@ -189,14 +189,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    if hasattr(entry, "async_create_background_task"):
-        entry.async_create_background_task(
-            hass,
-            coordinator.async_refresh(),
-            f"{DOMAIN}_initial_refresh_{entry.entry_id}",
-        )
+    def _start_initial_refresh(_event: Any = None) -> None:
+        if hasattr(entry, "async_create_background_task"):
+            entry.async_create_background_task(
+                hass,
+                coordinator.async_refresh(),
+                f"{DOMAIN}_initial_refresh_{entry.entry_id}",
+            )
+        else:
+            hass.async_create_task(coordinator.async_refresh())
+
+    if getattr(hass, "state", CoreState.running) == CoreState.running:
+        _start_initial_refresh()
     else:
-        hass.async_create_task(coordinator.async_refresh())
+        entry.async_on_unload(
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_initial_refresh)
+        )
     return True
 
 

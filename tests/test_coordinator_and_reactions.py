@@ -928,3 +928,88 @@ async def test_external_calendar_sync_heals_missing_and_same_score_updated_badge
         new_d1.badge_summary,
         new_d2.badge_summary,
     }
+
+
+async def test_weekly_sunday_gym_bag_bundling_and_boot_cache_guard(monkeypatch: Any) -> None:
+    from custom_components.mental_load.models import CalendarEventInput, DayLoadAnalysis, HiddenTask
+
+    hass = FakeHass()
+    # 2026-11-29 is Sunday; 2026-12-01 (Tue) & 2026-12-03 (Thu) have school Sport
+    sun = datetime.date(2026, 11, 29)
+    tue = datetime.date(2026, 12, 1)
+    thu = datetime.date(2026, 12, 3)
+    tz = datetime.timezone(datetime.timedelta(hours=1))
+
+    entry = ConfigEntry(
+        entry_id="sport_bundle_entry",
+        data={CONF_CALENDARS: ["calendar.parent"], CONF_CHILDREN_CALENDARS: ["calendar.kids"], CONF_HORIZON_DAYS: 7},
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+
+    def _ev(d: datetime.date, summary: str, src: str) -> CalendarEventInput:
+        return CalendarEventInput(
+            uid=f"{d.isoformat()}-{summary}",
+            summary=summary,
+            start=datetime.datetime.combine(d, datetime.time(9, 0), tzinfo=tz),
+            end=datetime.datetime.combine(d, datetime.time(10, 0), tzinfo=tz),
+            source_calendar=src,
+        )
+
+    events_by_day = {
+        sun.isoformat(): [],
+        tue.isoformat(): [_ev(tue, "Sport", "calendar.kids [Stundenplan/Kind]")],
+        thu.isoformat(): [_ev(thu, "Turnen", "calendar.kids [Stundenplan/Kind]")],
+    }
+    results = {
+        sun.isoformat(): DayLoadAnalysis(
+            date=sun, score=10, level="low", badge_summary="🟢 10%", reasoning="Ruhe", factor_breakdown={}
+        ),
+        tue.isoformat(): DayLoadAnalysis(
+            date=tue,
+            score=40,
+            level="medium",
+            badge_summary="🟡 40%",
+            reasoning="Sport",
+            factor_breakdown={},
+            hidden_tasks=[
+                HiddenTask(
+                    uid="tue_pack",
+                    parent_event_summary="Sport",
+                    title="🎒 Turnbeutel packen",
+                    category="packing",
+                    start=datetime.datetime.combine(tue, datetime.time(7, 15), tzinfo=tz),
+                    end=datetime.datetime.combine(tue, datetime.time(7, 30), tzinfo=tz),
+                )
+            ],
+        ),
+        thu.isoformat(): DayLoadAnalysis(
+            date=thu, score=35, level="medium", badge_summary="🟡 35%", reasoning="Turnen", factor_breakdown={}
+        ),
+    }
+
+    coord._apply_weekly_sport_bag_bundling(results, events_by_day, coord.merged_config, tz)
+    assert results[tue.isoformat()].hidden_tasks == []
+    sun_tasks = results[sun.isoformat()].hidden_tasks
+    assert len(sun_tasks) == 1
+    assert "Turnbeutel für die ganze Woche packen" in sun_tasks[0].title
+    assert sun_tasks[0].start.hour == 17 and sun_tasks[0].start.minute == 30
+
+    # If Sunday already has a user Turnbeutel event, do NOT add duplicate bundled task
+    results[sun.isoformat()].hidden_tasks = []
+    events_by_day[sun.isoformat()] = [_ev(sun, "Turnbeutel für die Woche packen", "calendar.kids [Stundenplan/Kind]")]
+    coord._apply_weekly_sport_bag_bundling(results, events_by_day, coord.merged_config, tz)
+    assert results[sun.isoformat()].hidden_tasks == []
+
+    # Boot cache guard: failing calendar.get_events must NOT overwrite existing sensor data with 0%
+    existing = {sun.isoformat(): results[sun.isoformat()]}
+    coord.data = existing
+
+    async def _failing_cal(*args: Any, **kwargs: Any) -> Any:
+        if args[0] == "calendar" and args[1] == "get_events":
+            raise RuntimeError("Service unavailable")
+        return {}
+
+    hass.services.async_call = _failing_cal  # type: ignore[method-assign]
+    returned = await coord._async_update_data()
+    assert returned is existing
+    assert coord._last_calendar_fetch_failed is True

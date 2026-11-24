@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.9.3] — 2026-11-24
+
+### Added & Fixed
+- **Calendar Suppression Tags (`#no-prep`, `[ML:no-prep]`, `#noprep`, `#kein-packen`):** Marked events never generate hidden prep, packing, or travel tasks in either LLM prompts or the local heuristic fallback.
+- **Weekly Sunday Gym-Bag Bundling:** Suppresses daily weekday evening-before gym-bag tasks for regular school `Sport`/`Turnen` and schedules a single Sunday evening task (`17:30–17:45`) if the next school week has gym lessons (skipping if Sunday already has a gym-bag calendar event).
+- **Startup Cache Protection (`EVENT_HOMEASSISTANT_STARTED`):** Delays the initial background refresh until Home Assistant finishes starting and keeps persisted cache entries intact instead of overwriting them with `0%` if `calendar.get_events` fails temporarily.
+- **120s Project Breakdown Timeout:** Extends `async_breakdown_projects()` HTTP timeout to `BATCH_REQUEST_TIMEOUT_SECONDS` (`120s`) to avoid premature timeouts with `antigravity_cli`.
+
+---
+
 ## [1.9.2] — 2026-11-24
 
 ### Fixed
