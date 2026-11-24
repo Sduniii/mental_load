@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "mental_load"
-VERSION = "1.9.3"
+VERSION = "1.9.4"
 
 URL_BASE = "/mental_load_card"
 JSMODULES = [
@@ -73,6 +73,11 @@ CONF_USER_PROFILE = "user_profile"
 CONF_CHILDREN_PROFILES = "children_profiles"
 CONF_CHILDREN_CALENDARS = "children_calendars"
 DEFAULT_CHILDREN_PROFILES = ""
+CONF_SPORT_BAG_MODE = "sport_bag_mode"
+SPORT_BAG_MODE_PER_DAY = "per_day"
+SPORT_BAG_MODE_SUNDAY_WEEKLY = "sunday_weekly"
+SPORT_BAG_MODE_OFF = "off"
+DEFAULT_SPORT_BAG_MODE = SPORT_BAG_MODE_PER_DAY
 CONF_WEIGHT_PACING = "weight_pacing"
 CONF_WEIGHT_SOCIAL = "weight_social"
 CONF_WEIGHT_MOBILITY = "weight_mobility"

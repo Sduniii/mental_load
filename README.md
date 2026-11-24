@@ -17,12 +17,11 @@ Eine HACS-kompatible Home-Assistant-Integration (`mental_load`), die Kalenderein
 - **30-Tage-Horizont, Vorlauf-Planung & Live-Entlastung:**
   - Große Termine (Geburtstage, Feiern, Reisen, Einschulung, Vorträge) werden **7–14 Tage vorher** auf ruhige Tage vorgezogen; Besorgungen/Packen wandern per Load-Balancing automatisch auf ruhigere Vortage.
   - Abgehakte Vorbereitungen in `todo.mental_load_aufgaben` oder in der Dashboard-Card reduzieren den Mental Load am Ziel-Termin sofort in Echtzeit.
-- **Kinder- & Stundenplan-Kalender + Sonntags-Turnbeutel-Bündelung:**
-  - Zusätzliche Kinder-/Stundenplan-Kalender lassen sich rein lesend einbinden (`[Stundenplan/Kind]`). Schulstunden erzeugen keinen elterlichen Terminstress.
-  - **Kinder-Profile:** Name und Geburtsdatum (`TT.MM.JJJJ` oder `YYYY-MM-DD`) berechnen Alter (inkl. Monate unter 2 Jahren), Entwicklungsstufe und 14-Tage-Geburtstagserinnerungen automatisch.
-  - **Automatische Sonntags-Bündelung:** Regulärer Schulsport (`Sport`/`Turnen`) erzeugt werktags keine täglichen Turnbeutel-Packaufgaben mehr, sondern einmalig **sonntags (`17:30–17:45`)** eine gebündelte Aufgabe *„Turnbeutel für die ganze Woche packen“* (sofern am Sonntag nicht ohnehin schon ein entsprechender Kalendereintrag existiert). Besondere Events wie `Schwimmen` oder `Ausflug` behalten ihre Vortags-Vorbereitung.
-- **Kalender-Steuer-Tags (`#no-prep`):**
-  - Mit **`#no-prep`**, **`[ML:no-prep]`**, **`#noprep`** oder **`#kein-packen`** im Titel oder in der Beschreibung eines Kalendereintrags werden Vorbereitungs-, Pack- und Fahrt-Aufgaben für diesen Termin sowohl im KI-Prompt als auch in der lokalen Heuristik zuverlässig unterdrückt.
+  - **Kinder- & Stundenplan-Kalender + flexible Turnbeutel-Regeln (`sport_bag_mode`):**
+    - Zusätzliche Kinder-/Stundenplan-Kalender lassen sich rein lesend einbinden (`[Stundenplan/Kind]`). Schulstunden erzeugen keinen elterlichen Terminstress.
+    - **Kinder-Profile:** Name und Geburtsdatum (`TT.MM.JJJJ` oder `YYYY-MM-DD`) berechnen Alter (inkl. Monate unter 2 Jahren), Entwicklungsstufe und 14-Tage-Geburtstagserinnerungen automatisch.
+    - **Turnbeutel-Modus (konfigurierbar in *Faktoren & Profil*):** Wähle passend zu Schule & Alter zwischen **`Vor jedem Sporttag (Standard)`**, **`Einmalig sonntags für die ganze Woche`** (`17:30–17:45`, außer am Sonntag steht bereits ein eigener Turnbeutel-Termin) oder **`Aus`**.
+    - **Steuer-Tags direkt im Kalender:** **`#weekly-bag`** / **`#sonntag-packen`** bündelt eine einzelne Sport-Serie auf Sonntag (ideal bei mehreren Kindern/Schulen), während **`#no-prep`**, **`[ML:no-prep]`**, **`#noprep`** oder **`#kein-packen`** Vorbereitungs-, Pack- und Fahrt-Aufgaben für einen Termin komplett unterdrücken.
 - **Projekt-Grundlast, Prioritäten & Sonntagsregel:**
   - Offene Dauerprojekte (`todo.*`, optional mit Anytype-Sync-Worker unter `services/anytype_ha_sync/`) erzeugen eine gedeckelte tägliche Grundlast (`+1%` Niedrig, `+2%` Mittel/Normal, `+3%` Hoch; standardmäßig bei `15%` gedeckelt) und werden nach Priorität (`Hoch` > `In Progress` > `Normal` > `Niedrig`) als 20–45-Min.-Etappen auf ruhige Feierabende und Wochenenden geplant – sonntags strikt ohne laute Arbeiten oder Behörden-/Laden-Erledigungen.
 - **Alle 5 gewichteten Belastungsfaktoren & Feedback-Gedächtnis:**

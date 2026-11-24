@@ -40,6 +40,7 @@ from .const import (
     CONF_REACTION_ENTITY,
     CONF_REACTION_ON_CRITICAL,
     CONF_REACTION_ON_WARNING,
+    CONF_SPORT_BAG_MODE,
     CONF_TARGET_CALENDAR_ENTITY,
     CONF_TARGET_TODO_ENTITY,
     CONF_UPDATE_INTERVAL,
@@ -51,6 +52,7 @@ from .const import (
     DEFAULT_MAX_PROJECT_STEPS_WEEKDAY,
     DEFAULT_MAX_PROJECT_STEPS_WEEKEND,
     DEFAULT_PROJECT_PLANNING_ENABLED,
+    DEFAULT_SPORT_BAG_MODE,
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_WARNING_THRESHOLD,
     DOMAIN,
@@ -62,6 +64,8 @@ from .const import (
     LEVEL_ORDER,
     MAX_FEEDBACK_HISTORY,
     PROVIDER_ANTIGRAVITY_CLI,
+    SPORT_BAG_MODE_OFF,
+    SPORT_BAG_MODE_SUNDAY_WEEKLY,
     STORAGE_VERSION,
 )
 from .llm_providers import LLMProviderClient
@@ -72,6 +76,7 @@ from .prompt_builder import (
     analyze_day_heuristic,
     compute_project_baseline,
     event_has_no_prep_tag,
+    event_has_weekly_bag_tag,
     extract_todo_priority,
     get_factor_weights,
     infer_step_sunday_restrictions,
@@ -429,7 +434,9 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         config: dict[str, Any],
         tz: datetime.tzinfo | None,
     ) -> None:
-        """Replace weekday school gym-bag packing tasks with one bundled Sunday reminder."""
+        """Apply configured school gym-bag packing mode (per_day, sunday_weekly, or off) plus #weekly-bag tags."""
+        sport_mode = str(config.get(CONF_SPORT_BAG_MODE, DEFAULT_SPORT_BAG_MODE))
+
         def _is_child_sport_event(ev: CalendarEventInput) -> bool:
             src = ev.source_calendar.lower()
             if "[stundenplan/kind]" not in src and not src.startswith("child:"):
@@ -439,16 +446,44 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             txt = f"{ev.summary} {ev.description}".lower()
             return ("sport" in txt or "turnen" in txt) and "schwimm" not in txt
 
+        def _is_bundled_sport_event(ev: CalendarEventInput) -> bool:
+            return _is_child_sport_event(ev) and (
+                sport_mode == SPORT_BAG_MODE_SUNDAY_WEEKLY or event_has_weekly_bag_tag(ev)
+            )
+
         def _is_gym_bag_text(text: str) -> bool:
             low = text.lower()
             return any(k in low for k in ("turnbeutel", "sportbeutel", "sportsachen", "gym bag"))
 
-        has_any_child_sport = any(
-            _is_child_sport_event(ev)
+        all_sport_events = [
+            ev
             for day_evs in events_by_day.values()
             for ev in day_evs
-        )
-        if not has_any_child_sport:
+            if _is_child_sport_event(ev)
+        ]
+        if not all_sport_events:
+            return
+
+        if sport_mode == SPORT_BAG_MODE_OFF:
+            for day_str, day in results.items():
+                day.hidden_tasks = [
+                    t
+                    for t in day.hidden_tasks
+                    if not (
+                        t.category == "packing"
+                        and (
+                            _is_gym_bag_text(f"{t.title} {t.parent_event_summary}")
+                            or (
+                                "sport" in t.parent_event_summary.lower()
+                                and "schwimm" not in f"{t.title} {t.parent_event_summary}".lower()
+                            )
+                        )
+                    )
+                ]
+            return
+
+        has_any_bundled = any(_is_bundled_sport_event(ev) for ev in all_sport_events)
+        if not has_any_bundled:
             return
 
         language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
@@ -457,28 +492,38 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         for day_str, day in results.items():
             if day.date.weekday() == 6:
                 continue
+            day_bundled_summaries = {
+                ev.summary.strip().lower()
+                for ev in events_by_day.get(day_str, [])
+                if _is_bundled_sport_event(ev) and ev.summary.strip()
+            }
+            if sport_mode != SPORT_BAG_MODE_SUNDAY_WEEKLY and not day_bundled_summaries:
+                continue
             filtered_tasks: list[HiddenTask] = []
             for t in day.hidden_tasks:
-                if t.category == "packing" and (
-                    _is_gym_bag_text(f"{t.title} {t.parent_event_summary}")
-                    or (
-                        "sport" in t.parent_event_summary.lower()
-                        and "schwimm" not in f"{t.title} {t.parent_event_summary}".lower()
+                if t.category == "packing":
+                    parent_low = t.parent_event_summary.strip().lower()
+                    is_sport_task = _is_gym_bag_text(f"{t.title} {t.parent_event_summary}") or (
+                        "sport" in parent_low and "schwimm" not in f"{t.title} {t.parent_event_summary}".lower()
                     )
-                ):
-                    continue
+                    if sport_mode == SPORT_BAG_MODE_SUNDAY_WEEKLY and is_sport_task:
+                        continue
+                    if day_bundled_summaries and (
+                        any(s in parent_low or parent_low in s for s in day_bundled_summaries)
+                    ):
+                        continue
                 filtered_tasks.append(t)
             day.hidden_tasks = filtered_tasks
 
         for day_str, day in results.items():
             if day.date.weekday() != 6:
                 continue
-            next_week_has_sport = any(
-                _is_child_sport_event(ev)
+            next_week_has_bundled = any(
+                _is_bundled_sport_event(ev)
                 for offset in range(1, 6)
                 for ev in events_by_day.get((day.date + datetime.timedelta(days=offset)).isoformat(), [])
             )
-            if not next_week_has_sport:
+            if not next_week_has_bundled:
                 continue
 
             sunday_events = events_by_day.get(day_str, [])

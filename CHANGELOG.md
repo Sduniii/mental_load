@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.4] — 2026-11-24
+
+### Added & Changed
+- **Configurable School Gym Bag Packing (`sport_bag_mode`):** Added option in *Factors & Profile* / setup wizard (`per_day` [default: pack before each gym day], `sunday_weekly` [pack once on Sunday 17:30], or `off` [disable automatic gym-bag reminders]), adapting cleanly to different schools and children's ages.
+- **Per-Series `#weekly-bag` / `#sonntag-packen` Tag:** Tagging an individual school Sport/Turnen event or series with `#weekly-bag`, `[ML:weekly-bag]`, or `#sonntag-packen` bundles that child/series once on Sunday even when `per_day` is selected globally for older/other children.
+
+---
+
 ## [1.9.3] — 2026-11-24
 
 ### Added & Fixed

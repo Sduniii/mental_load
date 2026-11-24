@@ -942,16 +942,22 @@ async def test_weekly_sunday_gym_bag_bundling_and_boot_cache_guard(monkeypatch: 
 
     entry = ConfigEntry(
         entry_id="sport_bundle_entry",
-        data={CONF_CALENDARS: ["calendar.parent"], CONF_CHILDREN_CALENDARS: ["calendar.kids"], CONF_HORIZON_DAYS: 7},
+        data={
+            CONF_CALENDARS: ["calendar.parent"],
+            CONF_CHILDREN_CALENDARS: ["calendar.kids"],
+            CONF_HORIZON_DAYS: 7,
+            "sport_bag_mode": "sunday_weekly",
+        },
     )
     coord = MentalLoadCoordinator(hass, entry)
 
-    def _ev(d: datetime.date, summary: str, src: str) -> CalendarEventInput:
+    def _ev(d: datetime.date, summary: str, src: str, desc: str = "") -> CalendarEventInput:
         return CalendarEventInput(
             uid=f"{d.isoformat()}-{summary}",
             summary=summary,
             start=datetime.datetime.combine(d, datetime.time(9, 0), tzinfo=tz),
             end=datetime.datetime.combine(d, datetime.time(10, 0), tzinfo=tz),
+            description=desc,
             source_calendar=src,
         )
 
@@ -993,6 +999,32 @@ async def test_weekly_sunday_gym_bag_bundling_and_boot_cache_guard(monkeypatch: 
     assert len(sun_tasks) == 1
     assert "Turnbeutel für die ganze Woche packen" in sun_tasks[0].title
     assert sun_tasks[0].start.hour == 17 and sun_tasks[0].start.minute == 30
+
+    # Mixed per_day family: only #weekly-bag child gets Sunday bundling, non-tagged per_day child keeps weekday packing
+    results[sun.isoformat()].hidden_tasks = []
+    results[tue.isoformat()].hidden_tasks = [
+        HiddenTask(
+            uid="older_kid_pack",
+            parent_event_summary="Sport Gymnasium",
+            title="🎒 Turnbeutel packen",
+            category="packing",
+            start=datetime.datetime.combine(tue, datetime.time(7, 15), tzinfo=tz),
+            end=datetime.datetime.combine(tue, datetime.time(7, 30), tzinfo=tz),
+        )
+    ]
+    events_by_day[tue.isoformat()] = [_ev(tue, "Sport Gymnasium", "calendar.kids [Stundenplan/Kind]")]
+    events_by_day[thu.isoformat()] = [_ev(thu, "Turnen Grundschule", "calendar.kids [Stundenplan/Kind]", "#weekly-bag")]
+    per_day_cfg = {**coord.merged_config, "sport_bag_mode": "per_day"}
+    coord._apply_weekly_sport_bag_bundling(results, events_by_day, per_day_cfg, tz)
+    assert len(results[tue.isoformat()].hidden_tasks) == 1
+    assert len(results[sun.isoformat()].hidden_tasks) == 1
+
+    # Mode 'off': suppresses weekday gym-bag tasks and adds NO Sunday task
+    results[sun.isoformat()].hidden_tasks = []
+    off_cfg = {**coord.merged_config, "sport_bag_mode": "off"}
+    coord._apply_weekly_sport_bag_bundling(results, events_by_day, off_cfg, tz)
+    assert results[tue.isoformat()].hidden_tasks == []
+    assert results[sun.isoformat()].hidden_tasks == []
 
     # If Sunday already has a user Turnbeutel event, do NOT add duplicate bundled task
     results[sun.isoformat()].hidden_tasks = []

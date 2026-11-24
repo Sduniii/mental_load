@@ -198,8 +198,8 @@ def test_children_profiles_age_and_timetable_handling() -> None:
     assert "Children & School Timetable Context" in sys_prompt
     assert "calendar.stundenplan_kind" in sys_prompt
     assert "age **8 Jahre**" in sys_prompt
-    assert len(sys_prompt) < 2350
-    assert len(build_system_prompt({}, [])) < 1700
+    assert len(sys_prompt) < 2450
+    assert len(build_system_prompt({}, [])) < 1750
 
     usr_prompt = build_day_user_prompt(ref, [], {}, cfg)
     assert "Children & School Timetable Context" not in usr_prompt
@@ -240,10 +240,31 @@ def test_children_profiles_age_and_timetable_handling() -> None:
             source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
         )
     )
+    # Default per_day mode: keeps daily Sportunterricht packing AND Schwimmen packing
     school_only = analyze_day_heuristic(ref, school_events, {}, cfg)
     assert school_only.factor_breakdown[FACTOR_PACING] < 15
+    assert any("Schulsachen packen" in t.title and "Sportunterricht" in t.title for t in school_only.hidden_tasks)
     assert any("Schulsachen packen" in t.title and "Schwimmen" in t.title for t in school_only.hidden_tasks)
-    assert not any("Sportunterricht" in t.parent_event_summary for t in school_only.hidden_tasks)
+
+    # sunday_weekly mode: suppresses weekday Sportunterricht packing while keeping Schwimmen
+    weekly_cfg = {**cfg, "sport_bag_mode": "sunday_weekly"}
+    assert "bundled once on Sunday" in build_system_prompt(weekly_cfg, [])
+    school_weekly = analyze_day_heuristic(ref, school_events, {}, weekly_cfg)
+    assert not any("Sportunterricht" in t.parent_event_summary for t in school_weekly.hidden_tasks)
+    assert any("Schwimmen" in t.title for t in school_weekly.hidden_tasks)
+
+    # Per-series #weekly-bag tag overrides per_day mode for that event only
+    tagged_sport = CalendarEventInput(
+        uid="s_wb",
+        summary="Sportunterricht",
+        start=datetime.datetime(2026, 11, 23, 8, 45, tzinfo=tz),
+        end=datetime.datetime(2026, 11, 23, 9, 30, tzinfo=tz),
+        description="Turnbeutel bleibt #weekly-bag",
+        source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+    )
+    assert "[WEEKLY-BAG]" in build_day_user_prompt(ref, [tagged_sport], {}, cfg)
+    tagged_heur = analyze_day_heuristic(ref, [tagged_sport], {}, cfg)
+    assert not any("Sportunterricht" in t.parent_event_summary for t in tagged_heur.hidden_tasks)
 
 
 def test_no_prep_tags_suppress_hidden_tasks_in_prompt_parser_and_heuristic() -> None:

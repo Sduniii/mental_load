@@ -7,7 +7,7 @@ Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Mod
 - ⚡ **75–90% weniger Tokens & Multi-Day-Batching:** Stabile Cache-Fingerprints, 0-Token Fast-Path für leere Tage, gebündelte Batch-Analyse (`4` Tage bei `antigravity_cli`, `7` Tage bei Cloud-APIs) sowie Anthropic System-Prompt-Caching.
 - 🚀 **Non-Blocking Startup & Boot-Cache-Schutz:** Sofortiger Start aus dem gespeicherten Cache, frischer Abruf erst nach `EVENT_HOMEASSISTANT_STARTED`, `120s`-Timeout für Batches/Projekt-Breakdown und automatischer To-Do-Fallback (`due_datetime` → `due_date`).
 - 🔁 **Selbstheilender Kalender-Sync (`calendar.mental_load_2`):** Gleicht gegen tatsächlich vorhandene Kalender-Einträge ab und stellt fehlende oder geänderte Tages-Badges automatisch wieder her.
-- 🎒 **Kalender-Tags (`#no-prep`) & Sonntags-Turnbeutel-Bündelung:** `#no-prep` / `[ML:no-prep]` / `#kein-packen` unterdrücken unerwünschte Aufgaben direkt im Termin; Schulsport (`Sport`/`Turnen`) wird einmalig sonntags um `17:30` gebündelt statt täglich an Werktags-Vorabenden.
+- 🎒 **Konfigurierbarer Turnbeutel-Modus (`sport_bag_mode`) & Kalender-Tags:** Wähle zwischen `Vor jedem Sporttag (Standard)`, `Einmalig sonntags` (`17:30`) oder `Aus`; zusätzlich steuerbar pro Serie mit `#weekly-bag` / `#sonntag-packen` sowie `#no-prep` / `#kein-packen` im Termin.
 
 ## Neu in v1.8.0
 

@@ -39,6 +39,7 @@ from .const import (
     CONF_REACTION_ON_CRITICAL,
     CONF_REACTION_ON_WARNING,
     CONF_SHOW_HIDDEN_TASK_BLOCKS,
+    CONF_SPORT_BAG_MODE,
     CONF_TARGET_CALENDAR_ENTITY,
     CONF_TARGET_TODO_ENTITY,
     CONF_TEMPERATURE,
@@ -63,6 +64,7 @@ from .const import (
     DEFAULT_PROJECT_BASELINE_CAP,
     DEFAULT_PROJECT_BASELINE_PER_ITEM,
     DEFAULT_PROJECT_PLANNING_ENABLED,
+    DEFAULT_SPORT_BAG_MODE,
     DEFAULT_TEMPERATURE,
     DEFAULT_TRAVEL_MINUTES,
     DEFAULT_UPDATE_INTERVAL,
@@ -77,6 +79,9 @@ from .const import (
     PROVIDER_HEURISTIC,
     PROVIDER_MISTRAL,
     PROVIDER_OPENAI,
+    SPORT_BAG_MODE_OFF,
+    SPORT_BAG_MODE_PER_DAY,
+    SPORT_BAG_MODE_SUNDAY_WEEKLY,
 )
 
 PROVIDER_OPTIONS = [
@@ -88,6 +93,21 @@ PROVIDER_OPTIONS = [
     selector.SelectOptionDict(value=PROVIDER_CUSTOM_OPENAI, label="Ollama / OpenAI-Compatible URL"),
     selector.SelectOptionDict(value=PROVIDER_HA_CONVERSATION, label="Home Assistant Conversation Agent"),
     selector.SelectOptionDict(value=PROVIDER_HEURISTIC, label="Lokale Heuristik (Offline, kein API-Key)"),
+]
+
+SPORT_BAG_MODE_OPTIONS = [
+    selector.SelectOptionDict(
+        value=SPORT_BAG_MODE_PER_DAY,
+        label="Vor jedem Sporttag / Before each gym day (Standard)",
+    ),
+    selector.SelectOptionDict(
+        value=SPORT_BAG_MODE_SUNDAY_WEEKLY,
+        label="Einmalig sonntags für die ganze Woche / Once on Sunday",
+    ),
+    selector.SelectOptionDict(
+        value=SPORT_BAG_MODE_OFF,
+        label="Aus (keine automatischen Turnbeutel-Aufgaben) / Off",
+    ),
 ]
 
 WEIGHT_SELECTOR = selector.NumberSelector(
@@ -191,6 +211,12 @@ class MentalLoadConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 vol.Optional(CONF_CHILDREN_CALENDARS, default=[]): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="calendar", multiple=True)
+                ),
+                vol.Optional(CONF_SPORT_BAG_MODE, default=DEFAULT_SPORT_BAG_MODE): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=SPORT_BAG_MODE_OPTIONS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
                 ),
                 vol.Optional(CONF_CONTEXT_TODOS, default=[]): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="todo", multiple=True)
@@ -303,6 +329,15 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
             ),
             vol.Optional(CONF_CHILDREN_CALENDARS, default=self._cur(CONF_CHILDREN_CALENDARS, [])): selector.EntitySelector(
                 selector.EntitySelectorConfig(domain="calendar", multiple=True)
+            ),
+            vol.Optional(
+                CONF_SPORT_BAG_MODE,
+                default=self._cur(CONF_SPORT_BAG_MODE, DEFAULT_SPORT_BAG_MODE),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=SPORT_BAG_MODE_OPTIONS,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
             ),
             vol.Optional(CONF_WEIGHT_PACING, default=self._cur(CONF_WEIGHT_PACING, 1.0)): WEIGHT_SELECTOR,
             vol.Optional(CONF_WEIGHT_SOCIAL, default=self._cur(CONF_WEIGHT_SOCIAL, 1.0)): WEIGHT_SELECTOR,

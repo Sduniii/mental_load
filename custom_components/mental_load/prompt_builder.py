@@ -17,6 +17,7 @@ from .const import (
     CONF_LANGUAGE,
     CONF_PROJECT_BASELINE_CAP,
     CONF_PROJECT_BASELINE_PER_ITEM,
+    CONF_SPORT_BAG_MODE,
     CONF_USER_PROFILE,
     CONF_WEIGHT_HA_CONTEXT,
     CONF_WEIGHT_HIDDEN_WORK,
@@ -29,6 +30,7 @@ from .const import (
     DEFAULT_PREP_MINUTES,
     DEFAULT_PROJECT_BASELINE_CAP,
     DEFAULT_PROJECT_BASELINE_PER_ITEM,
+    DEFAULT_SPORT_BAG_MODE,
     DEFAULT_TRAVEL_MINUTES,
     DEFAULT_USER_PROFILE,
     FACTOR_HA_CONTEXT,
@@ -37,6 +39,9 @@ from .const import (
     FACTOR_PACING,
     FACTOR_SOCIAL,
     PROVIDER_HEURISTIC,
+    SPORT_BAG_MODE_OFF,
+    SPORT_BAG_MODE_PER_DAY,
+    SPORT_BAG_MODE_SUNDAY_WEEKLY,
 )
 from .models import (
     CalendarEventInput,
@@ -434,12 +439,19 @@ def parse_children_profiles(
 
 
 NO_PREP_TAGS = ("#no-prep", "[ml:no-prep]", "#noprep", "#kein-packen")
+WEEKLY_BAG_TAGS = ("#weekly-bag", "[ml:weekly-bag]", "#sonntag-packen", "#weeklybag")
 
 
 def event_has_no_prep_tag(event: CalendarEventInput) -> bool:
     """Return True if event summary or description carries a no-prep suppression tag."""
     haystack = f"{event.summary} {event.description}".lower()
     return any(tag in haystack for tag in NO_PREP_TAGS)
+
+
+def event_has_weekly_bag_tag(event: CalendarEventInput) -> bool:
+    """Return True if event summary or description requests Sunday weekly gym-bag bundling."""
+    haystack = f"{event.summary} {event.description}".lower()
+    return any(tag in haystack for tag in WEEKLY_BAG_TAGS)
 
 
 def format_children_context_block(
@@ -468,9 +480,25 @@ def format_children_context_block(
         )
 
     if child_cals:
+        sport_mode = str(config.get(CONF_SPORT_BAG_MODE, DEFAULT_SPORT_BAG_MODE))
+        if sport_mode == SPORT_BAG_MODE_SUNDAY_WEEKLY:
+            sport_rule = (
+                "do NOT create weekday evening-before gym-bag packing tasks for regular school Sport/Turnen "
+                "(bundled once on Sunday instead)"
+            )
+        elif sport_mode == SPORT_BAG_MODE_OFF:
+            sport_rule = (
+                "do NOT create gym-bag packing tasks for regular school Sport/Turnen"
+            )
+        else:
+            sport_rule = (
+                "extract age-appropriate evening-before packing (Sport/Schwimmen/Ausflug), EXCEPT events tagged `[WEEKLY-BAG]` (bundled once on Sunday instead)"
+            )
         lines.append(
             f"- Child calendars ({', '.join(child_cals)}) are tagged `[Stundenplan/Kind]`: "
-            "do NOT score consecutive school lessons as parent context-switching and do NOT create weekday evening-before gym-bag packing tasks for regular school Sport/Turnen (bundled once on Sunday instead). Only extract age-appropriate drop-off/pick-up logistics, schedule changes (Ausfall/Elternabend), and evening-before packing for special events (Schwimmen/Ausflug)."
+            f"do NOT score consecutive school lessons as parent context-switching and {sport_rule}; "
+            "still extract age-appropriate drop-off/pick-up logistics, schedule changes (Ausfall/Elternabend), "
+            "and special event packing (Schwimmen/Ausflug), respecting each child's profile notes."
         )
     return "\n".join(lines)
 
@@ -575,7 +603,12 @@ def _format_compact_day_block(
             desc = f" | {ev.description[:120]}" if ev.description else ""
             src = " [Stundenplan/Kind]" if "[stundenplan/kind]" in ev.source_calendar.lower() else ""
             no_prep = " [NO-PREP]" if event_has_no_prep_tag(ev) else ""
-            lines.append(f"{idx}. [{time_str}] {ev.summary}{loc}{desc}{src}{no_prep}")
+            weekly_bag = (
+                " [WEEKLY-BAG]"
+                if not no_prep and event_has_weekly_bag_tag(ev)
+                else ""
+            )
+            lines.append(f"{idx}. [{time_str}] {ev.summary}{loc}{desc}{src}{no_prep}{weekly_bag}")
         events_text = "\n".join(lines)
 
     parts = [f"Date: {target_date.isoformat()} ({weekday})", events_text]
@@ -995,7 +1028,14 @@ def analyze_day_heuristic(
         ev_end = ev.end if not ev.all_day else datetime.datetime.combine(target_date, datetime.time(9, 0), tzinfo=tzinfo)
 
         if is_child_cal:
-            needs_bag = any(k in text for k in ("schwimm", "ausflug", "wandertag", "verkleid", "fasching"))
+            sport_mode = str(config.get(CONF_SPORT_BAG_MODE, DEFAULT_SPORT_BAG_MODE))
+            is_special_bag = any(k in text for k in ("schwimm", "ausflug", "wandertag", "verkleid", "fasching"))
+            is_regular_sport = any(k in text for k in ("sport", "turnen"))
+            needs_bag = is_special_bag or (
+                is_regular_sport
+                and sport_mode == SPORT_BAG_MODE_PER_DAY
+                and not event_has_weekly_bag_tag(ev)
+            )
             is_special_child = any(k in text for k in ("eltern", "schulfest", "ferien", "ausfall", "entfall", "früh", "klassenarbeit"))
             if needs_bag:
                 bag_title = f"🎒 Schulsachen packen: {ev.summary}" if is_de else f"🎒 Pack school bag: {ev.summary}"
