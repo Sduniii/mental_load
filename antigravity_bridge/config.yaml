@@ -1,5 +1,5 @@
 name: "Antigravity CLI Bridge"
-version: "1.2.2"
+version: "1.2.3"
 slug: "antigravity_bridge"
 description: "Runs Google Antigravity CLI (agy) directly on Home Assistant with an OpenAI-compatible API (/v1) and Ingress Web UI for login & session management."
 url: "https://github.com/Sduniii/mental_load"

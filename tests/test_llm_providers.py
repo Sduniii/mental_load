@@ -325,6 +325,43 @@ def test_bridge_session_bundle_roundtrip(tmp_path: Any) -> None:
     assert (dst_home / ".gemini" / "google_accounts.json").read_text() == '{"active":"test@example.com"}'
 
 
+def test_bridge_account_status_and_logout(tmp_path: Any, monkeypatch: Any) -> None:
+    from tools.agy_bridge_server import clear_session_files, get_account_status
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    empty = get_account_status(tmp_path)
+    assert empty["authenticated"] is False
+    assert empty["auth_mode"] == "none"
+    assert empty["account_email"] == ""
+
+    (tmp_path / ".gemini" / "antigravity-cli").mkdir(parents=True)
+    (tmp_path / ".config" / "antigravity").mkdir(parents=True)
+    (tmp_path / ".gemini" / "google_accounts.json").write_text('{"active":"test@example.com","old":[]}')
+    (tmp_path / ".config" / "antigravity" / "credential-user-scope").write_text("secret")
+    (tmp_path / ".gemini" / "antigravity-cli" / "settings.json").write_text('{"modelProvider":"antigravity"}')
+
+    connected = get_account_status(tmp_path)
+    assert connected["authenticated"] is True
+    assert connected["auth_mode"] == "google_oauth"
+    assert connected["account_email"] == "test@example.com"
+    assert ".gemini/google_accounts.json" in connected["session_files"]
+
+    removed = clear_session_files(tmp_path)
+    assert ".gemini/google_accounts.json" in removed
+    assert ".config/antigravity/credential-user-scope" in removed
+    assert (tmp_path / ".gemini" / "antigravity-cli" / "settings.json").is_file()
+
+    after_logout = get_account_status(tmp_path)
+    assert after_logout["authenticated"] is False
+    assert after_logout["auth_mode"] == "none"
+
+    (tmp_path / ".gemini" / "antigravity-cli" / "settings.json").write_text('{"modelProvider":"gemini"}')
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy-key")
+    api_key_status = get_account_status(tmp_path)
+    assert api_key_status["authenticated"] is True
+    assert api_key_status["auth_mode"] == "gemini_api_key"
+
+
 def test_extract_wrapped_oauth_url() -> None:
     from tools.agy_bridge_server import extract_oauth_url
 

@@ -52,6 +52,12 @@ SESSION_FILES = [
     ".config/antigravity/credential-user-scope",
 ]
 
+LOGOUT_FILES = [
+    ".gemini/google_accounts.json",
+    ".gemini/antigravity-cli/jetski_state.pbtxt",
+    ".config/antigravity/credential-user-scope",
+]
+
 
 def resolve_agy_binary(explicit: str | None = None) -> str:
     """Find the `agy` CLI binary."""
@@ -164,6 +170,73 @@ def import_session_bundle(bundle_b64: str, home_dir: Path | None = None) -> list
             os.chmod(target, 0o600)
             imported.append(norm)
     return imported
+
+
+def get_account_status(home_dir: Path | None = None) -> dict[str, Any]:
+    """Inspect local Antigravity CLI credential/session files without invoking interactive TUI."""
+    base = home_dir or Path.home()
+    account_email = ""
+    accounts_path = base / ".gemini" / "google_accounts.json"
+    if accounts_path.is_file():
+        try:
+            acc_data = json.loads(accounts_path.read_text(encoding="utf-8"))
+            if isinstance(acc_data, dict):
+                active = acc_data.get("active")
+                if isinstance(active, str) and active.strip():
+                    account_email = active.strip()
+        except (OSError, ValueError):
+            pass
+
+    gemini_api_key_mode = False
+    settings_path = base / ".gemini" / "antigravity-cli" / "settings.json"
+    if settings_path.is_file():
+        try:
+            settings_data = json.loads(settings_path.read_text(encoding="utf-8"))
+            if (
+                isinstance(settings_data, dict)
+                and settings_data.get("modelProvider") == "gemini"
+                and bool(os.environ.get("GEMINI_API_KEY"))
+            ):
+                gemini_api_key_mode = True
+        except (OSError, ValueError):
+            pass
+
+    session_files_present = [rel for rel in SESSION_FILES if (base / rel).is_file()]
+    has_credentials = any((base / rel).is_file() for rel in LOGOUT_FILES)
+
+    if gemini_api_key_mode:
+        authenticated = True
+        auth_mode = "gemini_api_key"
+    elif account_email or has_credentials:
+        authenticated = True
+        auth_mode = "google_oauth"
+    else:
+        authenticated = False
+        auth_mode = "none"
+
+    return {
+        "authenticated": authenticated,
+        "auth_mode": auth_mode,
+        "account_email": account_email,
+        "session_files": session_files_present,
+    }
+
+
+def clear_session_files(home_dir: Path | None = None) -> list[str]:
+    """Remove persisted OAuth account/token files while preserving CLI settings."""
+    base = (home_dir or Path.home()).resolve()
+    removed: list[str] = []
+    for rel in LOGOUT_FILES:
+        target = (base / rel).resolve()
+        if not str(target).startswith(str(base)):
+            continue
+        if target.is_file():
+            try:
+                target.unlink()
+                removed.append(rel)
+            except OSError:
+                pass
+    return removed
 
 
 def extract_oauth_url(text: str) -> str:
@@ -294,7 +367,9 @@ INGRESS_HTML = """<!doctype html>
   button, a.btn { display: inline-block; text-decoration: none; background: #3b82f6; color: #fff; border: 0; border-radius: 8px; padding: 9px 14px; cursor: pointer; font-weight: 600; margin-right: 8px; font-size: 14px; }
   a.btn-green { background: #16a34a; }
   button.sec { background: #475569; }
+  button.danger { background: #dc2626; }
   .ok { color: #4ade80; }
+  .err { color: #f87171; }
   .muted { color: #94a3b8; font-size: 0.9rem; }
   #oauth-box { margin: 12px 0; padding: 12px; background: #052e16; border: 1px solid #16a34a; border-radius: 8px; display: none; }
 </style>
@@ -307,6 +382,7 @@ INGRESS_HTML = """<!doctype html>
     <p class="muted">Bridge-URL für <strong>Mental Load Analyzer</strong>: <code>http://127.0.0.1:11435/v1</code></p>
     <button onclick="loadStatus()">↻ Status prüfen</button>
     <button onclick="testPrompt()">⚡ Live-Test ("BEREIT")</button>
+    <button class="danger" onclick="logoutAccount()">🚪 Abmelden</button>
   </div>
 
   <div class="card">
@@ -344,11 +420,34 @@ function applyLoginData(d) {
     box.style.display = 'block';
   }
 }
+function escHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 async function loadStatus() {
   const r = await fetch('api/status');
   const d = await r.json();
+  let authHtml = '<span class="err">🔴 Nicht angemeldet</span> — Bitte unten auf <strong>Login starten</strong> klicken oder ein Session-Bundle importieren.';
+  if (d.authenticated && d.account_email) {
+    authHtml = `<span class="ok">🟢 Angemeldet:</span> <strong>${escHtml(d.account_email)}</strong>`;
+  } else if (d.authenticated && d.auth_mode === 'gemini_api_key') {
+    authHtml = '<span class="ok">🟢 Verbunden</span> (Gemini API Key)';
+  } else if (d.authenticated) {
+    authHtml = '<span class="ok">🟢 Angemeldet</span> (Session-Datei aktiv)';
+  }
+  const modelsText = Array.isArray(d.models) ? escHtml(d.models.slice(0,5).join(', ')) : '';
+  const modelsCount = Array.isArray(d.models) ? d.models.length : 0;
   document.getElementById('status').innerHTML =
-    `<span class="ok">● Aktiv</span> | Binary: <code>${d.agy_bin}</code> | Modelle: ${d.models.slice(0,5).join(', ')} (${d.models.length} gesamt)`;
+    `<div>${authHtml}</div><div style="margin-top:4px;">Binary: <code>${escHtml(d.agy_bin)}</code> | Modelle: ${modelsText} (${modelsCount} gesamt)</div>`;
+}
+async function logoutAccount() {
+  if (!confirm('Aktuellen Antigravity-Account wirklich abmelden?')) return;
+  const r = await fetch('api/logout', { method: 'POST' });
+  const d = await r.json();
+  if (!d.ok) {
+    document.getElementById('status').innerHTML = `<span class="err">❌ Abmelden fehlgeschlagen</span>`;
+    return;
+  }
+  await loadStatus();
 }
 async function testPrompt() {
   document.getElementById('status').textContent = 'Teste agy --print...';
@@ -393,6 +492,7 @@ async function importBundle() {
   document.getElementById('import-res').textContent = d.ok
     ? `✅ Importiert: ${d.imported.join(', ')}`
     : `❌ Fehler: ${d.error}`;
+  if (d.ok) setTimeout(loadStatus, 300);
 }
 loadStatus();
 </script>
@@ -458,7 +558,7 @@ class AgyBridgeHandler(BaseHTTPRequestHandler):
                 models = list_agy_models(self.agy_bin)
             except Exception:  # noqa: BLE001
                 models = [self.default_model]
-            self._send_json(200, {"agy_bin": self.agy_bin, "models": models})
+            self._send_json(200, {"agy_bin": self.agy_bin, "models": models, **get_account_status()})
             return
         if path == "/api/login/output":
             out = LOGIN_MANAGER.read_output()
@@ -508,6 +608,13 @@ class AgyBridgeHandler(BaseHTTPRequestHandler):
         if path == "/api/login/stop":
             LOGIN_MANAGER.stop()
             self._send_json(200, {"ok": True})
+            return
+        if path == "/api/logout":
+            if not self._check_auth():
+                return
+            LOGIN_MANAGER.stop()
+            removed = clear_session_files()
+            self._send_json(200, {"ok": True, "removed": removed, **get_account_status()})
             return
         if path == "/api/import-session":
             if not self._check_auth():
