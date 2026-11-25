@@ -2,10 +2,10 @@
   "config": {
     "step": {
       "user": {
-        "title": "Select Calendars & Horizon",
-        "description": "Choose source calendars (e.g. Google Calendar). They are queried strictly read-only.",
+        "title": "Select Shared Calendars & Horizon",
+        "description": "Choose shared household source calendars (e.g. Google Calendar). They are queried strictly read-only.",
         "data": {
-          "calendars": "Source Calendars",
+          "calendars": "Shared Household Calendars",
           "horizon_days": "Forecast Horizon (Days)",
           "update_interval": "Update Interval (Minutes)",
           "language": "Output Language"
@@ -23,13 +23,13 @@
         }
       },
       "profile_and_reactions": {
-        "title": "Profile, Hidden Tasks & Reactions",
-        "description": "Configure your personal profile, optional live HA context sensors, and active threshold reactions.",
+        "title": "Person Profile, Context & Reactions",
+        "description": "Configure your own routine rules (single parents can finish right here) and optionally add more adults or children.",
         "data": {
-          "user_profile": "Personal Profile & Stress Rules",
-          "children_profiles": "Children & Birthdays (e.g. Name: YYYY-MM-DD, school/daycare – one per line)",
-          "children_calendars": "Children & School Timetable Calendars (optional, read-only)",
-          "sport_bag_mode": "School Gym Bag Packing Mode (or tag individual series with #weekly-bag / #no-prep)",
+          "adult_name": "Name (Adult 1)",
+          "adult_calendars": "Personal Calendars for Adult 1 (optional, read-only)",
+          "adult_profile": "Daily Routines & Stress Rules (Free text)",
+          "add_more_people": "Add more people (partner / children) now",
           "context_todos": "Factor 4: Include Open To-Do Lists",
           "context_energy_sensor": "Factor 4: Sleep / Energy Sensor",
           "context_weather": "Factor 4: Weather Entity",
@@ -42,6 +42,34 @@
           "critical_threshold": "Critical Threshold (%)",
           "notify_service": "Notification Service",
           "reaction_entity": "Reaction Entity (Scene, Script, Helper)"
+        }
+      },
+      "setup_members": {
+        "title": "Additional Household Members",
+        "description": "Currently configured: {members_summary}",
+        "menu_options": {
+          "setup_add_adult": "Add Adult",
+          "setup_add_child": "Add Child",
+          "setup_finish": "Finish Setup"
+        }
+      },
+      "setup_add_adult": {
+        "title": "Add Adult",
+        "description": "Enter name, optional personal calendars, and a free-text profile textbox (work hours, shared duties, recovery preferences).",
+        "data": {
+          "name": "Name",
+          "calendars": "Assigned Calendars (optional, read-only)",
+          "profile": "Daily Routines & Stress Rules (Free text)"
+        }
+      },
+      "setup_add_child": {
+        "title": "Add Child",
+        "description": "Enter name, birthdate (for age & birthday alerts), optional school/child calendars, and free-text routines (e.g. gym bag on Sundays, prepare lunch in the morning).",
+        "data": {
+          "name": "Name",
+          "birthdate": "Birthdate (DD.MM.YYYY or YYYY-MM-DD, optional)",
+          "calendars": "Child & School Timetable Calendars (optional, read-only)",
+          "profile": "Routines, School/Daycare & Notes (Free text)"
         }
       }
     },
@@ -56,7 +84,8 @@
         "title": "Mental Load Settings",
         "menu_options": {
           "llm_settings": "AI Provider & Model",
-          "factors_and_profile": "5 Factors, Weights & Profile",
+          "household_members": "Household & Persons (Adults & Children)",
+          "factors_and_profile": "5 Factors, Weights & Projects",
           "calendar_and_todo": "Calendar Display & To-Do Sync",
           "active_reactions": "Active Reactions & Thresholds"
         }
@@ -71,13 +100,66 @@
           "temperature": "Temperature"
         }
       },
-      "factors_and_profile": {
-        "title": "5 Factors & Personal Profile",
+      "household_members": {
+        "title": "Manage Household & Persons",
+        "description": "Configured people: {members_summary}",
+        "menu_options": {
+          "add_adult": "Add Adult",
+          "add_child": "Add Child",
+          "edit_member": "Edit Person",
+          "remove_member": "Remove Person"
+        }
+      },
+      "add_adult": {
+        "title": "Add Adult",
         "data": {
-          "user_profile": "Personal Profile & Stress Rules",
-          "children_profiles": "Children & Birthdays (e.g. Name: YYYY-MM-DD, school/daycare – one per line)",
-          "children_calendars": "Children & School Timetable Calendars (optional, read-only)",
-          "sport_bag_mode": "School Gym Bag Packing Mode (or tag individual series with #weekly-bag / #no-prep)",
+          "name": "Name",
+          "calendars": "Assigned Calendars (optional, read-only)",
+          "profile": "Daily Routines & Stress Rules (Free text)"
+        }
+      },
+      "add_child": {
+        "title": "Add Child",
+        "data": {
+          "name": "Name",
+          "birthdate": "Birthdate (DD.MM.YYYY or YYYY-MM-DD, optional)",
+          "calendars": "Child & School Timetable Calendars (optional, read-only)",
+          "profile": "Routines, School/Daycare & Notes (Free text)"
+        }
+      },
+      "edit_member": {
+        "title": "Select Person to Edit",
+        "data": {
+          "member_id": "Person"
+        }
+      },
+      "edit_adult": {
+        "title": "Edit Adult",
+        "data": {
+          "name": "Name",
+          "calendars": "Assigned Calendars (optional, read-only)",
+          "profile": "Daily Routines & Stress Rules (Free text)"
+        }
+      },
+      "edit_child": {
+        "title": "Edit Child",
+        "data": {
+          "name": "Name",
+          "birthdate": "Birthdate (DD.MM.YYYY or YYYY-MM-DD, optional)",
+          "calendars": "Child & School Timetable Calendars (optional, read-only)",
+          "profile": "Routines, School/Daycare & Notes (Free text)"
+        }
+      },
+      "remove_member": {
+        "title": "Remove Person",
+        "description": "Select a person to remove (at least one adult must remain in the household).",
+        "data": {
+          "member_id": "Person"
+        }
+      },
+      "factors_and_profile": {
+        "title": "5 Factors & Projects",
+        "data": {
           "weight_pacing": "Weight Factor 1: Pacing & Context Switching",
           "weight_social": "Weight Factor 2: Social Battery",
           "weight_mobility": "Weight Factor 3: Mobility & Travel",
@@ -96,8 +178,7 @@
       "calendar_and_todo": {
         "title": "Calendar & Invisible Tasks",
         "data": {
-          "calendars": "Source Calendars",
-          "children_calendars": "Children & School Timetable Calendars (optional, read-only)",
+          "calendars": "Shared Household Calendars",
           "horizon_days": "Forecast Horizon (Days)",
           "update_interval": "Update Interval (Minutes)",
           "show_hidden_task_blocks": "Show hidden head-task blocks in calendar.mental_load",
@@ -121,6 +202,10 @@
           "reaction_entity": "Reaction Entity (Scene, Script, Helper, Automation)"
         }
       }
+    },
+    "error": {
+      "cannot_remove_last_adult": "At least one adult must remain in the household.",
+      "no_members": "No people configured to edit."
     }
   }
 }

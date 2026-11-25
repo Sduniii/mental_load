@@ -14,10 +14,10 @@ from .const import (
     CONF_DEFAULT_FOLLOWUP_MINUTES,
     CONF_DEFAULT_PREP_MINUTES,
     CONF_DEFAULT_TRAVEL_MINUTES,
+    CONF_HOUSEHOLD_MEMBERS,
     CONF_LANGUAGE,
     CONF_PROJECT_BASELINE_CAP,
     CONF_PROJECT_BASELINE_PER_ITEM,
-    CONF_SPORT_BAG_MODE,
     CONF_USER_PROFILE,
     CONF_WEIGHT_HA_CONTEXT,
     CONF_WEIGHT_HIDDEN_WORK,
@@ -30,7 +30,6 @@ from .const import (
     DEFAULT_PREP_MINUTES,
     DEFAULT_PROJECT_BASELINE_CAP,
     DEFAULT_PROJECT_BASELINE_PER_ITEM,
-    DEFAULT_SPORT_BAG_MODE,
     DEFAULT_TRAVEL_MINUTES,
     DEFAULT_USER_PROFILE,
     FACTOR_HA_CONTEXT,
@@ -38,10 +37,9 @@ from .const import (
     FACTOR_MOBILITY,
     FACTOR_PACING,
     FACTOR_SOCIAL,
+    MEMBER_ROLE_ADULT,
+    MEMBER_ROLE_CHILD,
     PROVIDER_HEURISTIC,
-    SPORT_BAG_MODE_OFF,
-    SPORT_BAG_MODE_PER_DAY,
-    SPORT_BAG_MODE_SUNDAY_WEEKLY,
 )
 from .models import (
     CalendarEventInput,
@@ -439,7 +437,6 @@ def parse_children_profiles(
 
 
 NO_PREP_TAGS = ("#no-prep", "[ml:no-prep]", "#noprep", "#kein-packen")
-WEEKLY_BAG_TAGS = ("#weekly-bag", "[ml:weekly-bag]", "#sonntag-packen", "#weeklybag")
 
 
 def event_has_no_prep_tag(event: CalendarEventInput) -> bool:
@@ -448,59 +445,161 @@ def event_has_no_prep_tag(event: CalendarEventInput) -> bool:
     return any(tag in haystack for tag in NO_PREP_TAGS)
 
 
-def event_has_weekly_bag_tag(event: CalendarEventInput) -> bool:
-    """Return True if event summary or description requests Sunday weekly gym-bag bundling."""
-    haystack = f"{event.summary} {event.description}".lower()
-    return any(tag in haystack for tag in WEEKLY_BAG_TAGS)
+def normalize_household_members(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return normalized adult & child member records, migrating legacy config fields if needed."""
+    language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
+    default_adult_name = "Erwachsener 1" if language.startswith("de") else "Adult 1"
+    raw_members = config.get(CONF_HOUSEHOLD_MEMBERS)
+
+    normalized: list[dict[str, Any]] = []
+    if isinstance(raw_members, list) and raw_members:
+        for idx, item in enumerate(raw_members, start=1):
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or MEMBER_ROLE_ADULT).strip().lower()
+            if role not in (MEMBER_ROLE_ADULT, MEMBER_ROLE_CHILD):
+                role = MEMBER_ROLE_ADULT
+            fallback_name = (
+                f"{'Kind' if language.startswith('de') else 'Child'} {idx}"
+                if role == MEMBER_ROLE_CHILD
+                else f"{'Erwachsener' if language.startswith('de') else 'Adult'} {idx}"
+            )
+            name = str(item.get("name") or fallback_name).strip() or fallback_name
+            raw_cals = item.get("calendars") or []
+            cals = [str(c).strip() for c in raw_cals if str(c).strip()] if isinstance(raw_cals, list) else []
+            normalized.append(
+                {
+                    "id": str(item.get("id") or f"member_{idx}"),
+                    "role": role,
+                    "name": name,
+                    "birthdate": str(item.get("birthdate") or "").strip() if role == MEMBER_ROLE_CHILD else "",
+                    "calendars": cals,
+                    "profile": str(item.get("profile") or "").strip(),
+                }
+            )
+        if any(m["role"] == MEMBER_ROLE_ADULT for m in normalized):
+            return normalized
+
+    # Legacy migration: user_profile -> Adult 1, children_profiles + children_calendars -> Child members
+    legacy_profile = str(config.get(CONF_USER_PROFILE, DEFAULT_USER_PROFILE) or DEFAULT_USER_PROFILE).strip()
+    adult_entry = {
+        "id": "adult_1",
+        "role": MEMBER_ROLE_ADULT,
+        "name": default_adult_name,
+        "birthdate": "",
+        "calendars": [],
+        "profile": legacy_profile,
+    }
+    normalized = [adult_entry] + [m for m in normalized if m["role"] == MEMBER_ROLE_CHILD]
+
+    legacy_child_cals = [
+        str(c).strip() for c in (config.get(CONF_CHILDREN_CALENDARS, []) or []) if str(c).strip()
+    ]
+    if not any(m["role"] == MEMBER_ROLE_CHILD for m in normalized):
+        legacy_children = parse_children_profiles(
+            str(config.get(CONF_CHILDREN_PROFILES, DEFAULT_CHILDREN_PROFILES) or "")
+        )
+        for idx, child in enumerate(legacy_children, start=1):
+            normalized.append(
+                {
+                    "id": f"child_{idx}",
+                    "role": MEMBER_ROLE_CHILD,
+                    "name": str(child.get("name") or f"Kind {idx}").strip(),
+                    "birthdate": str(child.get("birthdate") or "").strip(),
+                    "calendars": list(legacy_child_cals) if idx == 1 else [],
+                    "profile": str(child.get("note") or "").strip(),
+                }
+            )
+        if not legacy_children and legacy_child_cals:
+            normalized.append(
+                {
+                    "id": "child_1",
+                    "role": MEMBER_ROLE_CHILD,
+                    "name": "Kind 1" if language.startswith("de") else "Child 1",
+                    "birthdate": "",
+                    "calendars": legacy_child_cals,
+                    "profile": "",
+                }
+            )
+    return normalized
+
+
+def _resolve_child_member_stats(
+    member: dict[str, Any],
+    ref: datetime.date,
+) -> dict[str, Any]:
+    """Compute age, stage hint, and birthday proximity for a normalized child member dict."""
+    raw_dob = str(member.get("birthdate") or "").strip()
+    dob, _ = _parse_birthdate_token(raw_dob) if raw_dob else (None, "")
+    return parse_children_profiles(
+        f"{member['name']}: {dob.isoformat() if dob else raw_dob}",
+        reference_date=ref,
+    )[0] if dob else {
+        "name": member["name"],
+        "birthdate": raw_dob or None,
+        "age_years": None,
+        "age_months": None,
+        "age_display": "Alter unbekannt",
+        "stage_hint": "Altersstufe nicht angegeben",
+        "days_until_birthday": None,
+        "note": member.get("profile", ""),
+    }
+
+
+def format_household_context_block(
+    config: dict[str, Any],
+    target_date: datetime.date | None = None,
+) -> str:
+    """Format household adults & children with per-person calendars and free-text routines for prompts."""
+    ref = target_date or datetime.date.today()
+    members = normalize_household_members(config)
+    adults = [m for m in members if m["role"] == MEMBER_ROLE_ADULT]
+    children = [m for m in members if m["role"] == MEMBER_ROLE_CHILD]
+
+    lines: list[str] = ["### Household Context"]
+    if len(adults) >= 2:
+        lines.append(
+            f"- Household has {len(adults)} adults sharing duties; evaluate total household load across available adults (solo-parenting or overlapping shifts raise strain)."
+        )
+    for adult in adults:
+        cal_str = f" | Calendars: {', '.join(adult['calendars'])}" if adult.get("calendars") else ""
+        prof_str = f": {adult['profile']}" if adult.get("profile") else ""
+        lines.append(f"- Adult **{adult['name']}**{cal_str}{prof_str}")
+
+    if children:
+        lines.append("Children:")
+        has_child_cals = False
+        for child in children:
+            stats = _resolve_child_member_stats(child, ref)
+            bday_note = ""
+            days_until = stats.get("days_until_birthday")
+            if days_until == 0:
+                bday_note = " | 🎂 BIRTHDAY TODAY!"
+            elif isinstance(days_until, int) and 1 <= days_until <= 14:
+                bday_note = f" | 🎂 Birthday in {days_until}d"
+            cal_list = child.get("calendars") or []
+            if cal_list:
+                has_child_cals = True
+            cal_str = f" | Calendars: {', '.join(cal_list)}" if cal_list else ""
+            prof_str = f" | Rules/Notes: {child['profile']}" if child.get("profile") else ""
+            lines.append(
+                f"- Child **{child['name']}**: age **{stats['age_display']}** "
+                f"({stats.get('birthdate') or '?'}) — {stats['stage_hint']}{cal_str}{prof_str}{bday_note}"
+            )
+        if has_child_cals:
+            lines.append(
+                "- Events tagged `[Stundenplan/Kind]` come from a child/school calendar: do NOT score consecutive school lessons as adult pacing stress; follow each child's Rules/Notes strictly for routine tasks (meals, gym bag, pickup) and respect `[NO-PREP]`."
+            )
+
+    return "\n".join(lines)
 
 
 def format_children_context_block(
     config: dict[str, Any],
     target_date: datetime.date | None = None,
 ) -> str:
-    """Format configured children profiles + child/school calendar rules once for system prompt."""
-    ref = target_date or datetime.date.today()
-    children = parse_children_profiles(str(config.get(CONF_CHILDREN_PROFILES, DEFAULT_CHILDREN_PROFILES) or ""), ref)
-    child_cals = [str(c).strip() for c in (config.get(CONF_CHILDREN_CALENDARS, []) or []) if str(c).strip()]
-    if not children and not child_cals:
-        return ""
-
-    lines: list[str] = ["### Children & School Timetable Context"]
-    for child in children:
-        note_str = f" | {child['note']}" if child.get("note") else ""
-        bday_note = ""
-        days_until = child.get("days_until_birthday")
-        if days_until == 0:
-            bday_note = " | 🎂 BIRTHDAY TODAY!"
-        elif isinstance(days_until, int) and 1 <= days_until <= 14:
-            bday_note = f" | 🎂 Birthday in {days_until}d"
-        lines.append(
-            f"- {child['name']}: age **{child['age_display']}** ({child.get('birthdate') or '?'}) — "
-            f"{child['stage_hint']}{note_str}{bday_note}"
-        )
-
-    if child_cals:
-        sport_mode = str(config.get(CONF_SPORT_BAG_MODE, DEFAULT_SPORT_BAG_MODE))
-        if sport_mode == SPORT_BAG_MODE_SUNDAY_WEEKLY:
-            sport_rule = (
-                "do NOT create weekday evening-before gym-bag packing tasks for regular school Sport/Turnen "
-                "(bundled once on Sunday instead)"
-            )
-        elif sport_mode == SPORT_BAG_MODE_OFF:
-            sport_rule = (
-                "do NOT create gym-bag packing tasks for regular school Sport/Turnen"
-            )
-        else:
-            sport_rule = (
-                "extract age-appropriate evening-before packing (Sport/Schwimmen/Ausflug), EXCEPT events tagged `[WEEKLY-BAG]` (bundled once on Sunday instead)"
-            )
-        lines.append(
-            f"- Child calendars ({', '.join(child_cals)}) are tagged `[Stundenplan/Kind]`: "
-            f"do NOT score consecutive school lessons as parent context-switching and {sport_rule}; "
-            "still extract age-appropriate drop-off/pick-up logistics, schedule changes (Ausfall/Elternabend), "
-            "and special event packing (Schwimmen/Ausflug), respecting each child's profile notes."
-        )
-    return "\n".join(lines)
+    """Backward-compatible wrapper returning household/children context."""
+    return format_household_context_block(config, target_date)
 
 
 def format_children_day_alerts(
@@ -508,18 +607,16 @@ def format_children_day_alerts(
     target_date: datetime.date,
 ) -> str:
     """Return compact per-day child alerts ONLY when a child's birthday is within 14 days."""
-    children = parse_children_profiles(
-        str(config.get(CONF_CHILDREN_PROFILES, DEFAULT_CHILDREN_PROFILES) or ""),
-        target_date,
-    )
+    children = [m for m in normalize_household_members(config) if m["role"] == MEMBER_ROLE_CHILD]
     alerts: list[str] = []
     for child in children:
-        days_until = child.get("days_until_birthday")
+        stats = _resolve_child_member_stats(child, target_date)
+        days_until = stats.get("days_until_birthday")
         if days_until == 0:
-            alerts.append(f"- {child['name']} ({child['age_display']}): 🎂 BIRTHDAY TODAY!")
+            alerts.append(f"- {child['name']} ({stats['age_display']}): 🎂 BIRTHDAY TODAY!")
         elif isinstance(days_until, int) and 1 <= days_until <= 14:
             alerts.append(
-                f"- {child['name']} ({child['age_display']}): 🎂 Upcoming birthday in {days_until} days (plan gift/party prep ahead)"
+                f"- {child['name']} ({stats['age_display']}): 🎂 Upcoming birthday in {days_until} days (plan gift/party prep ahead)"
             )
     return "\n".join(alerts)
 
@@ -529,10 +626,9 @@ def build_system_prompt(
     feedback_history: list[FeedbackEntry],
     batch_mode: bool = False,
 ) -> str:
-    """Build compact system instruction prompt covering 5 factors, children rules, defaults & JSON schema."""
+    """Build compact system instruction prompt covering 5 factors, household profiles, defaults & JSON schema."""
     language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
-    profile = str(config.get(CONF_USER_PROFILE, DEFAULT_USER_PROFILE)).strip()
-    children_block = format_children_context_block(config)
+    household_block = format_household_context_block(config)
     weights = get_factor_weights(config)
     prep_min = int(config.get(CONF_DEFAULT_PREP_MINUTES, DEFAULT_PREP_MINUTES))
     travel_min = int(config.get(CONF_DEFAULT_TRAVEL_MINUTES, DEFAULT_TRAVEL_MINUTES))
@@ -553,7 +649,6 @@ def build_system_prompt(
         ]
         feedback_section = "\nCalibration:\n" + "\n".join(fb_lines) + "\n"
 
-    children_section = f"\n{children_block}\n" if children_block else ""
     day_schema = (
         '{"score":0-100,"top_stressor":"2-5 words","reasoning":"2 short sentences",'
         '"factor_breakdown":{"pacing_context":0-100,"social_battery":0-100,"mobility":0-100,"ha_context":0-100,"hidden_work":0-100},'
@@ -571,7 +666,7 @@ def build_system_prompt(
     return (
         "Cognitive Load & Invisible Mental Work Analyst for Home Assistant. Score daily load (0-100) across 5 factors and uncover hidden head-tasks.\n"
         f"{lang_instruction}\n"
-        f"Profile: {profile}{children_section}\n"
+        f"{household_block}\n"
         "Factors:\n"
         f"1. `{FACTOR_PACING}` (weight {weights[FACTOR_PACING]:.2f}x): tight gaps (<15m), overlaps, domain switches\n"
         f"2. `{FACTOR_SOCIAL}` (weight {weights[FACTOR_SOCIAL]:.2f}x): social drain, evening/group/high-stakes vs recovery\n"
@@ -601,14 +696,16 @@ def _format_compact_day_block(
             time_str = "ALL-DAY" if ev.all_day else f"{ev.start.strftime('%H:%M')}-{ev.end.strftime('%H:%M')}"
             loc = f" @{ev.location}" if ev.location else ""
             desc = f" | {ev.description[:120]}" if ev.description else ""
-            src = " [Stundenplan/Kind]" if "[stundenplan/kind]" in ev.source_calendar.lower() else ""
+            src_raw = ev.source_calendar
+            src = ""
+            if "[stundenplan/kind" in src_raw.lower():
+                bracket_idx = src_raw.find("[Stundenplan/Kind")
+                src = f" {src_raw[bracket_idx:]}" if bracket_idx != -1 else " [Stundenplan/Kind]"
+            elif "[erwachsener:" in src_raw.lower():
+                bracket_idx = src_raw.find("[Erwachsener:")
+                src = f" {src_raw[bracket_idx:]}" if bracket_idx != -1 else ""
             no_prep = " [NO-PREP]" if event_has_no_prep_tag(ev) else ""
-            weekly_bag = (
-                " [WEEKLY-BAG]"
-                if not no_prep and event_has_weekly_bag_tag(ev)
-                else ""
-            )
-            lines.append(f"{idx}. [{time_str}] {ev.summary}{loc}{desc}{src}{no_prep}{weekly_bag}")
+            lines.append(f"{idx}. [{time_str}] {ev.summary}{loc}{desc}{src}{no_prep}")
         events_text = "\n".join(lines)
 
     parts = [f"Date: {target_date.isoformat()} ({weekday})", events_text]
@@ -972,7 +1069,7 @@ def analyze_day_heuristic(
     sorted_events = sorted(events, key=lambda e: e.start)
     child_events = [
         e for e in sorted_events
-        if "[stundenplan/kind]" in e.source_calendar.lower() or e.source_calendar.lower().startswith("child:")
+        if "[stundenplan/kind" in e.source_calendar.lower() or e.source_calendar.lower().startswith("child:")
     ]
     parent_events = [e for e in sorted_events if e not in child_events]
     timed_parent_events = [e for e in parent_events if not e.all_day]
@@ -1023,19 +1120,12 @@ def analyze_day_heuristic(
         if event_has_no_prep_tag(ev):
             continue
         text = f"{ev.summary} {ev.description}".lower()
-        is_child_cal = "[stundenplan/kind]" in ev.source_calendar.lower() or ev.source_calendar.lower().startswith("child:")
+        is_child_cal = "[stundenplan/kind" in ev.source_calendar.lower() or ev.source_calendar.lower().startswith("child:")
         ev_start = ev.start if not ev.all_day else datetime.datetime.combine(target_date, datetime.time(8, 30), tzinfo=tzinfo)
         ev_end = ev.end if not ev.all_day else datetime.datetime.combine(target_date, datetime.time(9, 0), tzinfo=tzinfo)
 
         if is_child_cal:
-            sport_mode = str(config.get(CONF_SPORT_BAG_MODE, DEFAULT_SPORT_BAG_MODE))
-            is_special_bag = any(k in text for k in ("schwimm", "ausflug", "wandertag", "verkleid", "fasching"))
-            is_regular_sport = any(k in text for k in ("sport", "turnen"))
-            needs_bag = is_special_bag or (
-                is_regular_sport
-                and sport_mode == SPORT_BAG_MODE_PER_DAY
-                and not event_has_weekly_bag_tag(ev)
-            )
+            needs_bag = any(k in text for k in ("sport", "schwimm", "turnen", "ausflug", "wandertag", "verkleid", "fasching"))
             is_special_child = any(k in text for k in ("eltern", "schulfest", "ferien", "ausfall", "entfall", "früh", "klassenarbeit"))
             if needs_bag:
                 bag_title = f"🎒 Schulsachen packen: {ev.summary}" if is_de else f"🎒 Pack school bag: {ev.summary}"

@@ -195,14 +195,14 @@ def test_children_profiles_age_and_timetable_handling() -> None:
         CONF_CHILDREN_CALENDARS: ["calendar.stundenplan_kind"],
     }
     sys_prompt = build_system_prompt(cfg, [])
-    assert "Children & School Timetable Context" in sys_prompt
+    assert "Household Context" in sys_prompt
     assert "calendar.stundenplan_kind" in sys_prompt
     assert "age **8 Jahre**" in sys_prompt
     assert len(sys_prompt) < 2450
     assert len(build_system_prompt({}, [])) < 1750
 
     usr_prompt = build_day_user_prompt(ref, [], {}, cfg)
-    assert "Children & School Timetable Context" not in usr_prompt
+    assert "Household Context" not in usr_prompt
     assert "Upcoming birthday in 7 days" in usr_prompt
     assert "Not configured" not in usr_prompt
     assert len(usr_prompt) < 300
@@ -214,21 +214,21 @@ def test_children_profiles_age_and_timetable_handling() -> None:
             summary="Mathe",
             start=datetime.datetime(2026, 11, 23, 8, 0, tzinfo=tz),
             end=datetime.datetime(2026, 11, 23, 8, 45, tzinfo=tz),
-            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind: Kind A]",
         ),
         CalendarEventInput(
             uid="s2",
             summary="Sportunterricht",
             start=datetime.datetime(2026, 11, 23, 8, 45, tzinfo=tz),
             end=datetime.datetime(2026, 11, 23, 9, 30, tzinfo=tz),
-            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind: Kind A]",
         ),
         CalendarEventInput(
             uid="s3",
             summary="Deutsch",
             start=datetime.datetime(2026, 11, 23, 9, 30, tzinfo=tz),
             end=datetime.datetime(2026, 11, 23, 10, 15, tzinfo=tz),
-            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind: Kind A]",
         ),
     ]
     school_events.append(
@@ -237,34 +237,83 @@ def test_children_profiles_age_and_timetable_handling() -> None:
             summary="Schwimmen",
             start=datetime.datetime(2026, 11, 23, 10, 15, tzinfo=tz),
             end=datetime.datetime(2026, 11, 23, 11, 0, tzinfo=tz),
-            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+            source_calendar="calendar.stundenplan_kind [Stundenplan/Kind: Kind A]",
         )
     )
-    # Default per_day mode: keeps daily Sportunterricht packing AND Schwimmen packing
     school_only = analyze_day_heuristic(ref, school_events, {}, cfg)
     assert school_only.factor_breakdown[FACTOR_PACING] < 15
     assert any("Schulsachen packen" in t.title and "Sportunterricht" in t.title for t in school_only.hidden_tasks)
     assert any("Schulsachen packen" in t.title and "Schwimmen" in t.title for t in school_only.hidden_tasks)
 
-    # sunday_weekly mode: suppresses weekday Sportunterricht packing while keeping Schwimmen
-    weekly_cfg = {**cfg, "sport_bag_mode": "sunday_weekly"}
-    assert "bundled once on Sunday" in build_system_prompt(weekly_cfg, [])
-    school_weekly = analyze_day_heuristic(ref, school_events, {}, weekly_cfg)
-    assert not any("Sportunterricht" in t.parent_event_summary for t in school_weekly.hidden_tasks)
-    assert any("Schwimmen" in t.title for t in school_weekly.hidden_tasks)
 
-    # Per-series #weekly-bag tag overrides per_day mode for that event only
-    tagged_sport = CalendarEventInput(
-        uid="s_wb",
-        summary="Sportunterricht",
-        start=datetime.datetime(2026, 11, 23, 8, 45, tzinfo=tz),
-        end=datetime.datetime(2026, 11, 23, 9, 30, tzinfo=tz),
-        description="Turnbeutel bleibt #weekly-bag",
-        source_calendar="calendar.stundenplan_kind [Stundenplan/Kind]",
+def test_household_members_multi_adult_and_child_textbox_routines() -> None:
+    from custom_components.mental_load.const import (
+        CONF_HOUSEHOLD_MEMBERS,
+        MEMBER_ROLE_ADULT,
+        MEMBER_ROLE_CHILD,
     )
-    assert "[WEEKLY-BAG]" in build_day_user_prompt(ref, [tagged_sport], {}, cfg)
-    tagged_heur = analyze_day_heuristic(ref, [tagged_sport], {}, cfg)
-    assert not any("Sportunterricht" in t.parent_event_summary for t in tagged_heur.hidden_tasks)
+    from custom_components.mental_load.prompt_builder import normalize_household_members
+
+    single_parent_cfg = {
+        CONF_HOUSEHOLD_MEMBERS: [
+            {
+                "id": "adult_1",
+                "role": MEMBER_ROLE_ADULT,
+                "name": "Alex",
+                "calendars": ["calendar.alex"],
+                "profile": "Alleinerziehend, Homeoffice Mo-Mi.",
+            }
+        ]
+    }
+    single_prompt = build_system_prompt(single_parent_cfg, [])
+    assert "Adult **Alex**" in single_prompt
+    assert "Alleinerziehend" in single_prompt
+    assert "adults sharing duties" not in single_prompt
+
+    family_cfg = {
+        CONF_HOUSEHOLD_MEMBERS: [
+            {
+                "id": "adult_1",
+                "role": MEMBER_ROLE_ADULT,
+                "name": "Person A",
+                "calendars": ["calendar.a"],
+                "profile": "Frühdienst Di+Do.",
+            },
+            {
+                "id": "adult_2",
+                "role": MEMBER_ROLE_ADULT,
+                "name": "Person B",
+                "calendars": ["calendar.b"],
+                "profile": "Bringt Kinder morgens zur Schule.",
+            },
+            {
+                "id": "child_1",
+                "role": MEMBER_ROLE_CHILD,
+                "name": "Mia",
+                "birthdate": "14.05.2018",
+                "calendars": ["calendar.mia"],
+                "profile": "Turnbeutel immer sonntags für die ganze Woche packen; Brotdose morgens.",
+            },
+            {
+                "id": "child_2",
+                "role": MEMBER_ROLE_CHILD,
+                "name": "Tom",
+                "birthdate": "2013-09-01",
+                "calendars": ["calendar.tom"],
+                "profile": "Sportbeutel selbstständig am Vorabend.",
+            },
+        ]
+    }
+    members = normalize_household_members(family_cfg)
+    assert len(members) == 4
+    fam_prompt = build_system_prompt(family_cfg, [])
+    assert "2 adults sharing duties" in fam_prompt
+    assert "Adult **Person A**" in fam_prompt
+    assert "Adult **Person B**" in fam_prompt
+    assert "Child **Mia**" in fam_prompt
+    assert "Turnbeutel immer sonntags" in fam_prompt
+    assert "Child **Tom**" in fam_prompt
+    assert "Sportbeutel selbstständig" in fam_prompt
 
 
 def test_no_prep_tags_suppress_hidden_tasks_in_prompt_parser_and_heuristic() -> None:

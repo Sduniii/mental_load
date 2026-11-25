@@ -17,11 +17,11 @@ Eine HACS-kompatible Home-Assistant-Integration (`mental_load`), die Kalenderein
 - **30-Tage-Horizont, Vorlauf-Planung & Live-Entlastung:**
   - Große Termine (Geburtstage, Feiern, Reisen, Einschulung, Vorträge) werden **7–14 Tage vorher** auf ruhige Tage vorgezogen; Besorgungen/Packen wandern per Load-Balancing automatisch auf ruhigere Vortage.
   - Abgehakte Vorbereitungen in `todo.mental_load_aufgaben` oder in der Dashboard-Card reduzieren den Mental Load am Ziel-Termin sofort in Echtzeit.
-  - **Kinder- & Stundenplan-Kalender + flexible Turnbeutel-Regeln (`sport_bag_mode`):**
-    - Zusätzliche Kinder-/Stundenplan-Kalender lassen sich rein lesend einbinden (`[Stundenplan/Kind]`). Schulstunden erzeugen keinen elterlichen Terminstress.
-    - **Kinder-Profile:** Name und Geburtsdatum (`TT.MM.JJJJ` oder `YYYY-MM-DD`) berechnen Alter (inkl. Monate unter 2 Jahren), Entwicklungsstufe und 14-Tage-Geburtstagserinnerungen automatisch.
-    - **Turnbeutel-Modus (konfigurierbar in *Faktoren & Profil*):** Wähle passend zu Schule & Alter zwischen **`Vor jedem Sporttag (Standard)`**, **`Einmalig sonntags für die ganze Woche`** (`17:30–17:45`, außer am Sonntag steht bereits ein eigener Turnbeutel-Termin) oder **`Aus`**.
-    - **Steuer-Tags direkt im Kalender:** **`#weekly-bag`** / **`#sonntag-packen`** bündelt eine einzelne Sport-Serie auf Sonntag (ideal bei mehreren Kindern/Schulen), während **`#no-prep`**, **`[ML:no-prep]`**, **`#noprep`** oder **`#kein-packen`** Vorbereitungs-, Pack- und Fahrt-Aufgaben für einen Termin komplett unterdrücken.
+  - **Haushalt & Personen (Erwachsene & Kinder) mit eigener Freitext-Textbox:**
+    - Dynamisches Personen-Menü im Setup und unter **Konfigurieren → Haushalt & Personen** (*Hinzufügen / Bearbeiten / Entfernen*): ideal sowohl für **Alleinerziehende** (`1` Erwachsener) als auch Familien mit **2+ Erwachsenen** und **0–N Kindern**.
+    - **Pro Erwachsenem:** Name, optional zugeordnete eigene Kalender und große Freitext-Textbox (Arbeitszeiten, Zuständigkeiten, Entlastungs-/Solo-Tage) – alles fließt gemeinsam in **einen Haushalts-Mental-Load** ein.
+    - **Pro Kind:** Name, Geburtsdatum (`TT.MM.JJJJ` oder `YYYY-MM-DD`, für Alter & 14-Tage-Geburtstagserinnerungen), optional zugeordnete Kinder-/Stundenplan-Kalender (`[Stundenplan/Kind: <Name>]`) und große Freitext-Textbox für beliebige Alltagsregeln (z. B. *„Turnbeutel sonntags für die ganze Woche packen“*, *„Essen morgens zubereiten“*), die direkt von der KI ausgewertet werden.
+    - **Steuer-Tag für Einzeltermine:** Mit **`#no-prep`**, **`[ML:no-prep]`**, **`#noprep`** oder **`#kein-packen`** im Termin unterdrückst du Vorbereitungs-, Pack- und Fahrt-Aufgaben für einzelne Einträge zuverlässig.
 - **Projekt-Grundlast, Prioritäten & Sonntagsregel:**
   - Offene Dauerprojekte (`todo.*`, optional mit Anytype-Sync-Worker unter `services/anytype_ha_sync/`) erzeugen eine gedeckelte tägliche Grundlast (`+1%` Niedrig, `+2%` Mittel/Normal, `+3%` Hoch; standardmäßig bei `15%` gedeckelt) und werden nach Priorität (`Hoch` > `In Progress` > `Normal` > `Niedrig`) als 20–45-Min.-Etappen auf ruhige Feierabende und Wochenenden geplant – sonntags strikt ohne laute Arbeiten oder Behörden-/Laden-Erledigungen.
 - **Alle 5 gewichteten Belastungsfaktoren & Feedback-Gedächtnis:**

@@ -2,12 +2,16 @@
 
 Analysiere deinen Home-Assistant-Kalender (z. B. Google Calendar) mit dem KI-Modell deiner Wahl, berechne den täglichen **Mental Load (0–100%)**, mache **unsichtbare Kopf-Aufgaben** direkt in `calendar.mental_load` sichtbar und löse aktive Smart-Home-Reaktionen aus.
 
+## Neu in v1.10.0
+
+- 👨‍👩‍👧‍👦 **Dynamische Personen-Profile (`Haushalt & Personen`):** Verwalte `1..N` Erwachsene (Alleinerziehende oder mehrere Erwachsene) und `0..N` Kinder flexibel über ein eigenes Menü (*Hinzufügen / Bearbeiten / Entfernen*) – jeweils mit **Name**, optional **zugeordneten Kalendern** und einer **großen Freitext-Textbox** (plus **Geburtsdatum** bei Kindern) für individuelle Routinen (*Turnbeutel sonntags*, *Essen morgens zubereiten*, Aufgabenverteilung), komplett ohne starre Einzelfall-Dropdowns.
+
 ## Neu in v1.9.x
 
 - ⚡ **75–90% weniger Tokens & Multi-Day-Batching:** Stabile Cache-Fingerprints, 0-Token Fast-Path für leere Tage, gebündelte Batch-Analyse (`4` Tage bei `antigravity_cli`, `7` Tage bei Cloud-APIs) sowie Anthropic System-Prompt-Caching.
 - 🚀 **Non-Blocking Startup & Boot-Cache-Schutz:** Sofortiger Start aus dem gespeicherten Cache, frischer Abruf erst nach `EVENT_HOMEASSISTANT_STARTED`, `120s`-Timeout für Batches/Projekt-Breakdown und automatischer To-Do-Fallback (`due_datetime` → `due_date`).
 - 🔁 **Selbstheilender Kalender-Sync (`calendar.mental_load_2`):** Gleicht gegen tatsächlich vorhandene Kalender-Einträge ab und stellt fehlende oder geänderte Tages-Badges automatisch wieder her.
-- 🎒 **Konfigurierbarer Turnbeutel-Modus (`sport_bag_mode`) & Kalender-Tags:** Wähle zwischen `Vor jedem Sporttag (Standard)`, `Einmalig sonntags` (`17:30`) oder `Aus`; zusätzlich steuerbar pro Serie mit `#weekly-bag` / `#sonntag-packen` sowie `#no-prep` / `#kein-packen` im Termin.
+- 🏷️ **Kalender-Steuer-Tags (`#no-prep`):** `#no-prep` / `[ML:no-prep]` / `#kein-packen` unterdrücken unerwünschte Vorbereitungs- und Pack-Aufgaben direkt am einzelnen Kalendereintrag.
 
 ## Neu in v1.8.0
 

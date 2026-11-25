@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "Kalender & Zeitraum wählen",
-        "description": "Wähle deine Quell-Kalender (z. B. Google Calendar). Diese werden nur lesend abgefragt.",
+        "description": "Wähle deine gemeinsamen Haushalts-Kalender (z. B. Google Calendar). Diese werden nur lesend abgefragt.",
         "data": {
-          "calendars": "Quell-Kalender",
+          "calendars": "Gemeinsame Haushalts-Kalender",
           "horizon_days": "Vorschau-Horizont (Tage)",
           "update_interval": "Aktualisierungsintervall (Minuten)",
           "language": "Ausgabesprache"
@@ -23,13 +23,13 @@
         }
       },
       "profile_and_reactions": {
-        "title": "Profil, Kopf-Aufgaben & Aktive Reaktionen",
-        "description": "Definiere dein persönliches Belastungsprofil, optionale Live-Kontext-Sensoren und automatische Reaktionen.",
+        "title": "Personen-Profil, Kontext & Aktive Reaktionen",
+        "description": "Hinterlege deine eigenen Alltagsregeln (Alleinerziehende sind hier direkt fertig) und entscheide optional, ob weitere Erwachsene oder Kinder ergänzt werden sollen.",
         "data": {
-          "user_profile": "Persönliches Profil & Stress-Regeln",
-          "children_profiles": "Kinder & Geburtstage (z. B. Name: TT.MM.JJJJ, Schule/Kita – je Zeile)",
-          "children_calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
-          "sport_bag_mode": "Schulsport-Turnbeutel-Modus (alternativ pro Serie #weekly-bag oder #no-prep im Termin)",
+          "adult_name": "Name (Erwachsener 1)",
+          "adult_calendars": "Eigene Kalender von Erwachsener 1 (optional, nur lesend)",
+          "adult_profile": "Alltags- & Belastungsregeln (Freitext)",
+          "add_more_people": "Weitere Personen (Partner / Kinder) jetzt hinzufügen",
           "context_todos": "Faktor 4: Offene To-Do-Listen einbeziehen",
           "context_energy_sensor": "Faktor 4: Schlaf- / Energie-Sensor",
           "context_weather": "Faktor 4: Wetter-Entität",
@@ -42,6 +42,34 @@
           "critical_threshold": "Kritisch-Schwellenwert (%)",
           "notify_service": "Benachrichtigungs-Dienst (z. B. notify.mobile_app_...)",
           "reaction_entity": "Smart-Home-Reaktion auslösen (Szene, Skript, Helfer)"
+        }
+      },
+      "setup_members": {
+        "title": "Weitere Personen im Haushalt",
+        "description": "Aktuell erfasst: {members_summary}",
+        "menu_options": {
+          "setup_add_adult": "Erwachsenen hinzufügen",
+          "setup_add_child": "Kind hinzufügen",
+          "setup_finish": "Einrichtung abschließen"
+        }
+      },
+      "setup_add_adult": {
+        "title": "Erwachsenen hinzufügen",
+        "description": "Hinterlege Name, optionale eigene Kalender und eine individuelle Freitext-Beschreibung (z. B. Arbeitszeiten, Zuständigkeiten, Entlastungstage).",
+        "data": {
+          "name": "Name",
+          "calendars": "Zugeordnete Kalender (optional, nur lesend)",
+          "profile": "Alltags- & Belastungsregeln (Freitext)"
+        }
+      },
+      "setup_add_child": {
+        "title": "Kind hinzufügen",
+        "description": "Hinterlege Name, Geburtsdatum (für Alter & Geburtstagserinnerungen), optional Stundenplan-/Kindkalender und individuelle Routinen (z. B. Turnbeutel sonntags, Essen morgens zubereiten).",
+        "data": {
+          "name": "Name",
+          "birthdate": "Geburtsdatum (TT.MM.JJJJ oder YYYY-MM-DD, optional)",
+          "calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
+          "profile": "Routinen, Schule/Kita & Besonderheiten (Freitext)"
         }
       }
     },
@@ -56,7 +84,8 @@
         "title": "Mental Load Einstellungen",
         "menu_options": {
           "llm_settings": "KI-Provider & Modell",
-          "factors_and_profile": "5 Faktoren, Gewichtungen & Profil",
+          "household_members": "Haushalt & Personen (Erwachsene & Kinder)",
+          "factors_and_profile": "5 Faktoren, Gewichtungen & Projekte",
           "calendar_and_todo": "Kalender-Darstellung & To-Do-Sync",
           "active_reactions": "Aktive Reaktionen & Schwellenwerte"
         }
@@ -71,13 +100,66 @@
           "temperature": "Temperatur"
         }
       },
-      "factors_and_profile": {
-        "title": "5 Faktoren & Persönliches Profil",
+      "household_members": {
+        "title": "Haushalt & Personen verwalten",
+        "description": "Aktuell erfasste Personen: {members_summary}",
+        "menu_options": {
+          "add_adult": "Erwachsenen hinzufügen",
+          "add_child": "Kind hinzufügen",
+          "edit_member": "Person bearbeiten",
+          "remove_member": "Person entfernen"
+        }
+      },
+      "add_adult": {
+        "title": "Erwachsenen hinzufügen",
         "data": {
-          "user_profile": "Persönliches Profil & Stress-Regeln",
-          "children_profiles": "Kinder & Geburtstage (z. B. Name: TT.MM.JJJJ, Schule/Kita – je Zeile)",
-          "children_calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
-          "sport_bag_mode": "Schulsport-Turnbeutel-Modus (alternativ pro Serie #weekly-bag oder #no-prep im Termin)",
+          "name": "Name",
+          "calendars": "Zugeordnete Kalender (optional, nur lesend)",
+          "profile": "Alltags- & Belastungsregeln (Freitext)"
+        }
+      },
+      "add_child": {
+        "title": "Kind hinzufügen",
+        "data": {
+          "name": "Name",
+          "birthdate": "Geburtsdatum (TT.MM.JJJJ oder YYYY-MM-DD, optional)",
+          "calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
+          "profile": "Routinen, Schule/Kita & Besonderheiten (Freitext)"
+        }
+      },
+      "edit_member": {
+        "title": "Person zum Bearbeiten wählen",
+        "data": {
+          "member_id": "Person"
+        }
+      },
+      "edit_adult": {
+        "title": "Erwachsenen bearbeiten",
+        "data": {
+          "name": "Name",
+          "calendars": "Zugeordnete Kalender (optional, nur lesend)",
+          "profile": "Alltags- & Belastungsregeln (Freitext)"
+        }
+      },
+      "edit_child": {
+        "title": "Kind bearbeiten",
+        "data": {
+          "name": "Name",
+          "birthdate": "Geburtsdatum (TT.MM.JJJJ oder YYYY-MM-DD, optional)",
+          "calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
+          "profile": "Routinen, Schule/Kita & Besonderheiten (Freitext)"
+        }
+      },
+      "remove_member": {
+        "title": "Person entfernen",
+        "description": "Wähle die Person aus, die entfernt werden soll (mindestens ein Erwachsener bleibt erforderlich).",
+        "data": {
+          "member_id": "Person"
+        }
+      },
+      "factors_and_profile": {
+        "title": "5 Faktoren & Projekte",
+        "data": {
           "weight_pacing": "Gewichtung Faktor 1: Taktung & Kontextwechsel",
           "weight_social": "Gewichtung Faktor 2: Soziale Batterie",
           "weight_mobility": "Gewichtung Faktor 3: Ortswechsel & Mobilität",
@@ -96,8 +178,7 @@
       "calendar_and_todo": {
         "title": "Kalender & Unsichtbare Aufgaben",
         "data": {
-          "calendars": "Quell-Kalender",
-          "children_calendars": "Kinder- & Stundenplan-Kalender (optional, nur lesend)",
+          "calendars": "Gemeinsame Haushalts-Kalender",
           "horizon_days": "Vorschau-Horizont (Tage)",
           "update_interval": "Aktualisierungsintervall (Minuten)",
           "show_hidden_task_blocks": "Kopf-Aufgaben als Blöcke in calendar.mental_load anzeigen",
@@ -121,6 +202,10 @@
           "reaction_entity": "Reaktions-Entität (Szene, Skript, Helfer, Automation)"
         }
       }
+    },
+    "error": {
+      "cannot_remove_last_adult": "Mindestens ein Erwachsener muss im Haushalt bleiben.",
+      "no_members": "Keine Personen zum Bearbeiten vorhanden."
     }
   }
 }

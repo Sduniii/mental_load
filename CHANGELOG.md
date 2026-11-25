@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.0] — 2026-11-25
+
+### Added & Changed
+- **Dynamic Household & Person Profiles (`household_members`):** Replaced the single-purpose `sport_bag_mode` dropdown and line-based `children_profiles` with a flexible **Household & Persons** menu (`add_adult`, `add_child`, `edit_member`, `remove_member`) plus optional setup loop for single-parent (`1` adult) through multi-adult (`2+` adults) and `0..N` child households.
+- **Individual Free-Text Textboxes & Calendars per Person:** Every adult (`name`, optional `calendars`, multiline `profile` textbox) and every child (`name`, optional `birthdate`, optional `calendars`, multiline `profile` textbox) passes full custom rules directly to the AI (e.g., Sunday gym-bag packing, morning lunch prep, shared duties) while feeding **one shared household Mental Load score**.
+- **Automatic Legacy Migration & Calendar Source Tagging:** Existing `user_profile`, `children_profiles`, and `children_calendars` configs migrate automatically into `household_members`; per-child calendars keep `[Stundenplan/Kind: <Name>]` and `#no-prep` / `[ML:no-prep]` single-event suppression remains active.
+
+### Removed
+- Removed the temporary `sport_bag_mode` dropdown, `#weekly-bag` tag, and hardcoded Sunday gym-bag bundling logic in favor of AI-interpreted free-text person profiles.
+
+---
+
 ## [1.9.4] — 2026-11-24
 
 ### Added & Changed

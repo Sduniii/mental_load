@@ -168,3 +168,105 @@ async def test_native_todo_entity_and_ical_feed() -> None:
     assert "BEGIN:VEVENT" in ics
     assert "[x] Geschenk einpacken" in ics
     assert "Mental Load" in ics
+
+
+def _attach_flow_helpers(flow: Any) -> None:
+    flow.async_show_form = lambda **kw: {"type": "form", **kw}
+    flow.async_show_menu = lambda **kw: {"type": "menu", **kw}
+    flow.async_create_entry = lambda **kw: {"type": "create_entry", **kw}
+
+
+async def test_config_and_options_flow_household_members_crud() -> None:
+    from custom_components.mental_load import config_flow
+    from custom_components.mental_load.const import (
+        CONF_CALENDARS,
+        CONF_HOUSEHOLD_MEMBERS,
+        CONF_LANGUAGE,
+        CONF_PROVIDER,
+        MEMBER_ROLE_ADULT,
+        MEMBER_ROLE_CHILD,
+    )
+
+    # 1. Single-parent quick setup (no extra people loop needed)
+    single_flow = config_flow.MentalLoadConfigFlow()
+    _attach_flow_helpers(single_flow)
+    await single_flow.async_step_user({CONF_CALENDARS: ["calendar.family"], CONF_LANGUAGE: "de"})
+    await single_flow.async_step_llm({CONF_PROVIDER: "heuristic"})
+    res_single = await single_flow.async_step_profile_and_reactions(
+        {
+            "adult_name": "Sam",
+            "adult_calendars": ["calendar.sam"],
+            "adult_profile": "Alleinerziehend, Homeoffice",
+            "add_more_people": False,
+        }
+    )
+    assert res_single["type"] == "create_entry"
+    assert len(res_single["data"][CONF_HOUSEHOLD_MEMBERS]) == 1
+    assert res_single["data"][CONF_HOUSEHOLD_MEMBERS][0]["name"] == "Sam"
+    assert "sport_bag_mode" not in res_single["data"]
+
+    # 2. Multi-adult + child setup loop
+    fam_flow = config_flow.MentalLoadConfigFlow()
+    _attach_flow_helpers(fam_flow)
+    await fam_flow.async_step_user({CONF_CALENDARS: ["calendar.family"], CONF_LANGUAGE: "de"})
+    await fam_flow.async_step_llm({CONF_PROVIDER: "heuristic"})
+    menu = await fam_flow.async_step_profile_and_reactions(
+        {"adult_name": "Elternteil A", "adult_profile": "Vollzeit", "add_more_people": True}
+    )
+    assert menu["type"] == "menu" and menu["step_id"] == "setup_members"
+    await fam_flow.async_step_setup_add_adult(
+        {"name": "Elternteil B", "calendars": ["calendar.b"], "profile": "Teilzeit"}
+    )
+    await fam_flow.async_step_setup_add_child(
+        {"name": "Leo", "birthdate": "14.05.2018", "calendars": ["calendar.leo"], "profile": "Turnbeutel sonntags"}
+    )
+    res_fam = await fam_flow.async_step_setup_finish()
+    assert res_fam["type"] == "create_entry"
+    assert len(res_fam["data"][CONF_HOUSEHOLD_MEMBERS]) == 3
+
+    # 3. OptionsFlow: household_members add, edit, remove + last-adult guard
+    entry = ConfigEntry(entry_id="opt_entry", data=res_single["data"])
+    opt = config_flow.MentalLoadConfigFlow.async_get_options_flow(entry)
+    _attach_flow_helpers(opt)
+
+    init_menu = await opt.async_step_init()
+    assert "household_members" in init_menu["menu_options"]
+
+    hm_menu = await opt.async_step_household_members()
+    assert hm_menu["type"] == "menu"
+    assert "Sam" in hm_menu["description_placeholders"]["members_summary"]
+
+    # Cannot delete the last remaining adult
+    rm_err = await opt.async_step_remove_member({"member_id": "adult_1"})
+    assert rm_err["type"] == "form"
+    assert rm_err["errors"] == {"base": "cannot_remove_last_adult"}
+
+    # Add child & partner, then edit child and remove partner cleanly
+    res_add_c = await opt.async_step_add_child(
+        {"name": "Mia", "birthdate": "2020-02-02", "calendars": ["calendar.mia"], "profile": "Essen morgens zubereiten"}
+    )
+    entry.options = res_add_c["data"]
+    assert len(entry.options[CONF_HOUSEHOLD_MEMBERS]) == 2
+    child_id = next(m["id"] for m in entry.options[CONF_HOUSEHOLD_MEMBERS] if m["role"] == MEMBER_ROLE_CHILD)
+
+    await opt.async_step_edit_member({"member_id": child_id})
+    res_edit_c = await opt.async_step_edit_child(
+        {"name": "Mia", "birthdate": "2020-02-02", "calendars": ["calendar.mia"], "profile": "Turnbeutel sonntags; Essen morgens"}
+    )
+    entry.options = res_edit_c["data"]
+    edited = next(m for m in entry.options[CONF_HOUSEHOLD_MEMBERS] if m["id"] == child_id)
+    assert "Turnbeutel sonntags" in edited["profile"]
+
+    res_add_a = await opt.async_step_add_adult(
+        {"name": "Partner", "calendars": ["calendar.partner"], "profile": "Schichtdienst"}
+    )
+    entry.options = res_add_a["data"]
+    assert sum(1 for m in entry.options[CONF_HOUSEHOLD_MEMBERS] if m["role"] == MEMBER_ROLE_ADULT) == 2
+
+    res_rm_c = await opt.async_step_remove_member({"member_id": child_id})
+    entry.options = res_rm_c["data"]
+    assert all(m["id"] != child_id for m in entry.options[CONF_HOUSEHOLD_MEMBERS])
+
+    # Confirm sport_bag_mode is absent from factors_and_profile schema
+    factors_form = await opt.async_step_factors_and_profile()
+    assert "sport_bag_mode" not in str(factors_form["data_schema"])

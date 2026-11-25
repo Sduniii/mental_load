@@ -930,110 +930,89 @@ async def test_external_calendar_sync_heals_missing_and_same_score_updated_badge
     }
 
 
-async def test_weekly_sunday_gym_bag_bundling_and_boot_cache_guard(monkeypatch: Any) -> None:
-    from custom_components.mental_load.models import CalendarEventInput, DayLoadAnalysis, HiddenTask
+async def test_member_calendars_and_boot_cache_guard(monkeypatch: Any) -> None:
+    from custom_components.mental_load.const import (
+        CONF_HOUSEHOLD_MEMBERS,
+        MEMBER_ROLE_ADULT,
+        MEMBER_ROLE_CHILD,
+    )
+    from custom_components.mental_load.models import DayLoadAnalysis
 
     hass = FakeHass()
-    # 2026-11-29 is Sunday; 2026-12-01 (Tue) & 2026-12-03 (Thu) have school Sport
-    sun = datetime.date(2026, 11, 29)
-    tue = datetime.date(2026, 12, 1)
-    thu = datetime.date(2026, 12, 3)
+    today = datetime.date(2026, 11, 24)
     tz = datetime.timezone(datetime.timedelta(hours=1))
 
+    def _cal_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "calendar.family": {"events": []},
+            "calendar.partner": {
+                "events": [
+                    {
+                        "summary": "Schichtarbeit",
+                        "start": f"{today.isoformat()}T13:00:00+01:00",
+                        "end": f"{today.isoformat()}T21:00:00+01:00",
+                    }
+                ]
+            },
+            "calendar.leo": {
+                "events": [
+                    {
+                        "summary": "Schwimmen",
+                        "start": f"{today.isoformat()}T10:00:00+01:00",
+                        "end": f"{today.isoformat()}T11:30:00+01:00",
+                    }
+                ]
+            },
+        }
+
+    hass.services.set_response("calendar", "get_events", _cal_handler)
     entry = ConfigEntry(
-        entry_id="sport_bundle_entry",
+        entry_id="members_entry",
         data={
-            CONF_CALENDARS: ["calendar.parent"],
-            CONF_CHILDREN_CALENDARS: ["calendar.kids"],
-            CONF_HORIZON_DAYS: 7,
-            "sport_bag_mode": "sunday_weekly",
+            CONF_CALENDARS: ["calendar.family"],
+            CONF_HORIZON_DAYS: 2,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_HOUSEHOLD_MEMBERS: [
+                {
+                    "id": "adult_1",
+                    "role": MEMBER_ROLE_ADULT,
+                    "name": "Elternteil 1",
+                    "calendars": [],
+                    "profile": "Homeoffice Vormittag",
+                },
+                {
+                    "id": "adult_2",
+                    "role": MEMBER_ROLE_ADULT,
+                    "name": "Partner",
+                    "calendars": ["calendar.partner"],
+                    "profile": "Spätschicht",
+                },
+                {
+                    "id": "child_1",
+                    "role": MEMBER_ROLE_CHILD,
+                    "name": "Leo",
+                    "birthdate": "14.05.2018",
+                    "calendars": ["calendar.leo"],
+                    "profile": "Turnbeutel sonntags packen",
+                },
+            ],
         },
     )
     coord = MentalLoadCoordinator(hass, entry)
+    start_dt = datetime.datetime.combine(today, datetime.time.min, tzinfo=tz)
+    end_dt = datetime.datetime.combine(today + datetime.timedelta(days=2), datetime.time.min, tzinfo=tz)
+    by_day = await coord._async_fetch_events_by_day(start_dt, end_dt, 2, today, tz)
 
-    def _ev(d: datetime.date, summary: str, src: str, desc: str = "") -> CalendarEventInput:
-        return CalendarEventInput(
-            uid=f"{d.isoformat()}-{summary}",
-            summary=summary,
-            start=datetime.datetime.combine(d, datetime.time(9, 0), tzinfo=tz),
-            end=datetime.datetime.combine(d, datetime.time(10, 0), tzinfo=tz),
-            description=desc,
-            source_calendar=src,
-        )
-
-    events_by_day = {
-        sun.isoformat(): [],
-        tue.isoformat(): [_ev(tue, "Sport", "calendar.kids [Stundenplan/Kind]")],
-        thu.isoformat(): [_ev(thu, "Turnen", "calendar.kids [Stundenplan/Kind]")],
-    }
-    results = {
-        sun.isoformat(): DayLoadAnalysis(
-            date=sun, score=10, level="low", badge_summary="🟢 10%", reasoning="Ruhe", factor_breakdown={}
-        ),
-        tue.isoformat(): DayLoadAnalysis(
-            date=tue,
-            score=40,
-            level="medium",
-            badge_summary="🟡 40%",
-            reasoning="Sport",
-            factor_breakdown={},
-            hidden_tasks=[
-                HiddenTask(
-                    uid="tue_pack",
-                    parent_event_summary="Sport",
-                    title="🎒 Turnbeutel packen",
-                    category="packing",
-                    start=datetime.datetime.combine(tue, datetime.time(7, 15), tzinfo=tz),
-                    end=datetime.datetime.combine(tue, datetime.time(7, 30), tzinfo=tz),
-                )
-            ],
-        ),
-        thu.isoformat(): DayLoadAnalysis(
-            date=thu, score=35, level="medium", badge_summary="🟡 35%", reasoning="Turnen", factor_breakdown={}
-        ),
-    }
-
-    coord._apply_weekly_sport_bag_bundling(results, events_by_day, coord.merged_config, tz)
-    assert results[tue.isoformat()].hidden_tasks == []
-    sun_tasks = results[sun.isoformat()].hidden_tasks
-    assert len(sun_tasks) == 1
-    assert "Turnbeutel für die ganze Woche packen" in sun_tasks[0].title
-    assert sun_tasks[0].start.hour == 17 and sun_tasks[0].start.minute == 30
-
-    # Mixed per_day family: only #weekly-bag child gets Sunday bundling, non-tagged per_day child keeps weekday packing
-    results[sun.isoformat()].hidden_tasks = []
-    results[tue.isoformat()].hidden_tasks = [
-        HiddenTask(
-            uid="older_kid_pack",
-            parent_event_summary="Sport Gymnasium",
-            title="🎒 Turnbeutel packen",
-            category="packing",
-            start=datetime.datetime.combine(tue, datetime.time(7, 15), tzinfo=tz),
-            end=datetime.datetime.combine(tue, datetime.time(7, 30), tzinfo=tz),
-        )
-    ]
-    events_by_day[tue.isoformat()] = [_ev(tue, "Sport Gymnasium", "calendar.kids [Stundenplan/Kind]")]
-    events_by_day[thu.isoformat()] = [_ev(thu, "Turnen Grundschule", "calendar.kids [Stundenplan/Kind]", "#weekly-bag")]
-    per_day_cfg = {**coord.merged_config, "sport_bag_mode": "per_day"}
-    coord._apply_weekly_sport_bag_bundling(results, events_by_day, per_day_cfg, tz)
-    assert len(results[tue.isoformat()].hidden_tasks) == 1
-    assert len(results[sun.isoformat()].hidden_tasks) == 1
-
-    # Mode 'off': suppresses weekday gym-bag tasks and adds NO Sunday task
-    results[sun.isoformat()].hidden_tasks = []
-    off_cfg = {**coord.merged_config, "sport_bag_mode": "off"}
-    coord._apply_weekly_sport_bag_bundling(results, events_by_day, off_cfg, tz)
-    assert results[tue.isoformat()].hidden_tasks == []
-    assert results[sun.isoformat()].hidden_tasks == []
-
-    # If Sunday already has a user Turnbeutel event, do NOT add duplicate bundled task
-    results[sun.isoformat()].hidden_tasks = []
-    events_by_day[sun.isoformat()] = [_ev(sun, "Turnbeutel für die Woche packen", "calendar.kids [Stundenplan/Kind]")]
-    coord._apply_weekly_sport_bag_bundling(results, events_by_day, coord.merged_config, tz)
-    assert results[sun.isoformat()].hidden_tasks == []
+    todays = by_day[today.isoformat()]
+    assert any(ev.source_calendar == "calendar.partner [Erwachsener: Partner]" for ev in todays)
+    assert any(ev.source_calendar == "calendar.leo [Stundenplan/Kind: Leo]" for ev in todays)
 
     # Boot cache guard: failing calendar.get_events must NOT overwrite existing sensor data with 0%
-    existing = {sun.isoformat(): results[sun.isoformat()]}
+    existing = {
+        today.isoformat(): DayLoadAnalysis(
+            date=today, score=55, level="medium", badge_summary="🟡 55%", reasoning="Cached", factor_breakdown={}
+        )
+    }
     coord.data = existing
 
     async def _failing_cal(*args: Any, **kwargs: Any) -> Any:

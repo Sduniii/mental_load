@@ -28,6 +28,7 @@ from .const import (
     CONF_CONTEXT_WEATHER,
     CONF_CRITICAL_THRESHOLD,
     CONF_HORIZON_DAYS,
+    CONF_HOUSEHOLD_MEMBERS,
     CONF_LANGUAGE,
     CONF_MAX_PROJECT_STEPS_WEEKDAY,
     CONF_MAX_PROJECT_STEPS_WEEKEND,
@@ -40,7 +41,6 @@ from .const import (
     CONF_REACTION_ENTITY,
     CONF_REACTION_ON_CRITICAL,
     CONF_REACTION_ON_WARNING,
-    CONF_SPORT_BAG_MODE,
     CONF_TARGET_CALENDAR_ENTITY,
     CONF_TARGET_TODO_ENTITY,
     CONF_UPDATE_INTERVAL,
@@ -52,7 +52,6 @@ from .const import (
     DEFAULT_MAX_PROJECT_STEPS_WEEKDAY,
     DEFAULT_MAX_PROJECT_STEPS_WEEKEND,
     DEFAULT_PROJECT_PLANNING_ENABLED,
-    DEFAULT_SPORT_BAG_MODE,
     DEFAULT_UPDATE_INTERVAL,
     DEFAULT_WARNING_THRESHOLD,
     DOMAIN,
@@ -63,9 +62,9 @@ from .const import (
     LEVEL_HIGH,
     LEVEL_ORDER,
     MAX_FEEDBACK_HISTORY,
+    MEMBER_ROLE_ADULT,
+    MEMBER_ROLE_CHILD,
     PROVIDER_ANTIGRAVITY_CLI,
-    SPORT_BAG_MODE_OFF,
-    SPORT_BAG_MODE_SUNDAY_WEEKLY,
     STORAGE_VERSION,
 )
 from .llm_providers import LLMProviderClient
@@ -76,10 +75,10 @@ from .prompt_builder import (
     analyze_day_heuristic,
     compute_project_baseline,
     event_has_no_prep_tag,
-    event_has_weekly_bag_tag,
     extract_todo_priority,
     get_factor_weights,
     infer_step_sunday_restrictions,
+    normalize_household_members,
     sort_project_items_by_priority,
 )
 
@@ -362,7 +361,6 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         for stale_key in [k for k in self._cache if k < cutoff]:
             self._cache.pop(stale_key, None)
 
-        self._apply_weekly_sport_bag_bundling(results, events_by_day, config, tz)
         self._raw_analyses = results
         results = self._rebalance_and_score_horizon(
             results,
@@ -427,150 +425,6 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             "weather": weather_cond,
         }
 
-    def _apply_weekly_sport_bag_bundling(
-        self,
-        results: dict[str, DayLoadAnalysis],
-        events_by_day: dict[str, list[CalendarEventInput]],
-        config: dict[str, Any],
-        tz: datetime.tzinfo | None,
-    ) -> None:
-        """Apply configured school gym-bag packing mode (per_day, sunday_weekly, or off) plus #weekly-bag tags."""
-        sport_mode = str(config.get(CONF_SPORT_BAG_MODE, DEFAULT_SPORT_BAG_MODE))
-
-        def _is_child_sport_event(ev: CalendarEventInput) -> bool:
-            src = ev.source_calendar.lower()
-            if "[stundenplan/kind]" not in src and not src.startswith("child:"):
-                return False
-            if event_has_no_prep_tag(ev):
-                return False
-            txt = f"{ev.summary} {ev.description}".lower()
-            return ("sport" in txt or "turnen" in txt) and "schwimm" not in txt
-
-        def _is_bundled_sport_event(ev: CalendarEventInput) -> bool:
-            return _is_child_sport_event(ev) and (
-                sport_mode == SPORT_BAG_MODE_SUNDAY_WEEKLY or event_has_weekly_bag_tag(ev)
-            )
-
-        def _is_gym_bag_text(text: str) -> bool:
-            low = text.lower()
-            return any(k in low for k in ("turnbeutel", "sportbeutel", "sportsachen", "gym bag"))
-
-        all_sport_events = [
-            ev
-            for day_evs in events_by_day.values()
-            for ev in day_evs
-            if _is_child_sport_event(ev)
-        ]
-        if not all_sport_events:
-            return
-
-        if sport_mode == SPORT_BAG_MODE_OFF:
-            for day_str, day in results.items():
-                day.hidden_tasks = [
-                    t
-                    for t in day.hidden_tasks
-                    if not (
-                        t.category == "packing"
-                        and (
-                            _is_gym_bag_text(f"{t.title} {t.parent_event_summary}")
-                            or (
-                                "sport" in t.parent_event_summary.lower()
-                                and "schwimm" not in f"{t.title} {t.parent_event_summary}".lower()
-                            )
-                        )
-                    )
-                ]
-            return
-
-        has_any_bundled = any(_is_bundled_sport_event(ev) for ev in all_sport_events)
-        if not has_any_bundled:
-            return
-
-        language = str(config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE))
-        is_de = language.startswith("de")
-
-        for day_str, day in results.items():
-            if day.date.weekday() == 6:
-                continue
-            day_bundled_summaries = {
-                ev.summary.strip().lower()
-                for ev in events_by_day.get(day_str, [])
-                if _is_bundled_sport_event(ev) and ev.summary.strip()
-            }
-            if sport_mode != SPORT_BAG_MODE_SUNDAY_WEEKLY and not day_bundled_summaries:
-                continue
-            filtered_tasks: list[HiddenTask] = []
-            for t in day.hidden_tasks:
-                if t.category == "packing":
-                    parent_low = t.parent_event_summary.strip().lower()
-                    is_sport_task = _is_gym_bag_text(f"{t.title} {t.parent_event_summary}") or (
-                        "sport" in parent_low and "schwimm" not in f"{t.title} {t.parent_event_summary}".lower()
-                    )
-                    if sport_mode == SPORT_BAG_MODE_SUNDAY_WEEKLY and is_sport_task:
-                        continue
-                    if day_bundled_summaries and (
-                        any(s in parent_low or parent_low in s for s in day_bundled_summaries)
-                    ):
-                        continue
-                filtered_tasks.append(t)
-            day.hidden_tasks = filtered_tasks
-
-        for day_str, day in results.items():
-            if day.date.weekday() != 6:
-                continue
-            next_week_has_bundled = any(
-                _is_bundled_sport_event(ev)
-                for offset in range(1, 6)
-                for ev in events_by_day.get((day.date + datetime.timedelta(days=offset)).isoformat(), [])
-            )
-            if not next_week_has_bundled:
-                continue
-
-            sunday_events = events_by_day.get(day_str, [])
-            already_scheduled = any(
-                _is_gym_bag_text(f"{ev.summary} {ev.description}") for ev in sunday_events
-            ) or any(
-                _is_gym_bag_text(f"{t.title} {t.parent_event_summary}") for t in day.hidden_tasks
-            )
-            if already_scheduled:
-                continue
-
-            start_dt = datetime.datetime.combine(day.date, datetime.time(17, 30), tzinfo=tz)
-            end_dt = datetime.datetime.combine(day.date, datetime.time(17, 45), tzinfo=tz)
-            title = (
-                "🎒 Einpacken: Turnbeutel für die ganze Woche packen"
-                if is_de
-                else "🎒 Packing: Pack gym bag for the whole week"
-            )
-            parent_summary = "Schulsport (Woche)" if is_de else "School sports (week)"
-            checklist = (
-                [
-                    "Sportsachen & Hallenschuhe kontrollieren",
-                    "Turnbeutel für die gesamte Schulwoche bereitlegen",
-                ]
-                if is_de
-                else [
-                    "Check gym clothes & indoor shoes",
-                    "Pack gym bag for the school week",
-                ]
-            )
-            day.hidden_tasks.append(
-                HiddenTask(
-                    uid=_make_task_uid(day.date, parent_summary, title, "packing"),
-                    parent_event_summary=parent_summary,
-                    title=title,
-                    category="packing",
-                    start=start_dt,
-                    end=end_dt,
-                    load_contribution=8,
-                    checklist=checklist,
-                    parent_event_date=day_str,
-                    scheduled_date=day_str,
-                    lead_days=0,
-                    placement_mode="same_day",
-                )
-            )
-
     def _compute_day_fingerprint(
         self,
         day_str: str,
@@ -588,9 +442,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             "events": [e.to_dict() for e in sorted(events, key=lambda x: (x.start.isoformat(), x.summary))],
             "ha_context": day_ha_context,
             "weights": get_factor_weights(config),
-            "profile": config.get(CONF_USER_PROFILE, ""),
-            "children_profiles": config.get(CONF_CHILDREN_PROFILES, ""),
-            "children_calendars": sorted(str(c) for c in (config.get(CONF_CHILDREN_CALENDARS, []) or [])),
+            "household_members": normalize_household_members(config),
             "provider": config.get(CONF_PROVIDER, ""),
             "model": config.get(CONF_MODEL, ""),
             "base_url": config.get(CONF_BASE_URL, ""),
@@ -655,15 +507,35 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         today: datetime.date,
         tz: datetime.tzinfo | None,
     ) -> dict[str, list[CalendarEventInput]]:
-        """Read events from all configured source calendars without modifying them."""
+        """Read events from all configured source & member calendars without modifying them."""
         main_calendars = [str(c) for c in (self.merged_config.get(CONF_CALENDARS, []) or []) if str(c).strip()]
-        child_calendars = [
-            str(c)
-            for c in (self.merged_config.get(CONF_CHILDREN_CALENDARS, []) or [])
-            if str(c).strip() and str(c) not in main_calendars
-        ]
-        calendars = main_calendars + child_calendars
-        child_cal_set = set(child_calendars)
+        members = normalize_household_members(self.merged_config)
+        cal_labels: dict[str, str] = {}
+        extra_calendars: list[str] = []
+
+        for member in members:
+            role = member.get("role")
+            name = str(member.get("name") or "").strip()
+            for cal_id in member.get("calendars") or []:
+                cal_str = str(cal_id).strip()
+                if not cal_str:
+                    continue
+                if cal_str not in main_calendars and cal_str not in extra_calendars:
+                    extra_calendars.append(cal_str)
+                if role == MEMBER_ROLE_CHILD and cal_str not in cal_labels:
+                    cal_labels[cal_str] = f"{cal_str} [Stundenplan/Kind: {name}]" if name else f"{cal_str} [Stundenplan/Kind]"
+                elif role == MEMBER_ROLE_ADULT and cal_str not in cal_labels and cal_str not in main_calendars:
+                    cal_labels[cal_str] = f"{cal_str} [Erwachsener: {name}]" if name else cal_str
+
+        # Preserve legacy CONF_CHILDREN_CALENDARS support if present in raw config
+        for cal_id in self.merged_config.get(CONF_CHILDREN_CALENDARS, []) or []:
+            cal_str = str(cal_id).strip()
+            if cal_str and cal_str not in cal_labels:
+                cal_labels[cal_str] = f"{cal_str} [Stundenplan/Kind]"
+            if cal_str and cal_str not in main_calendars and cal_str not in extra_calendars:
+                extra_calendars.append(cal_str)
+
+        calendars = main_calendars + extra_calendars
         buckets: dict[str, list[CalendarEventInput]] = {
             (today + datetime.timedelta(days=i)).isoformat(): [] for i in range(horizon)
         }
@@ -694,7 +566,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
 
         for cal_id, cal_payload in response.items():
             raw_events = cal_payload.get("events", []) if isinstance(cal_payload, dict) else []
-            source_label = f"{cal_id} [Stundenplan/Kind]" if str(cal_id) in child_cal_set else str(cal_id)
+            source_label = cal_labels.get(str(cal_id), str(cal_id))
             for idx, item in enumerate(raw_events):
                 ev_start, all_day = _parse_event_boundary(item.get("start"), tz)
                 ev_end, _ = _parse_event_boundary(item.get("end", item.get("start")), tz)
