@@ -234,6 +234,7 @@ async def test_config_and_options_flow_household_members_crud() -> None:
 
     hm_menu = await opt.async_step_household_members()
     assert hm_menu["type"] == "menu"
+    assert "save_members" in hm_menu["menu_options"]
     assert "Sam" in hm_menu["description_placeholders"]["members_summary"]
 
     # Cannot delete the last remaining adult
@@ -241,31 +242,42 @@ async def test_config_and_options_flow_household_members_crud() -> None:
     assert rm_err["type"] == "form"
     assert rm_err["errors"] == {"base": "cannot_remove_last_adult"}
 
-    # Add child & partner, then edit child and remove partner cleanly
+    # Add child & partner, edit child, and remove child inside one session without creating entries yet
     res_add_c = await opt.async_step_add_child(
         {"name": "Mia", "birthdate": "2020-02-02", "calendars": ["calendar.mia"], "profile": "Essen morgens zubereiten"}
     )
-    entry.options = res_add_c["data"]
-    assert len(entry.options[CONF_HOUSEHOLD_MEMBERS]) == 2
-    child_id = next(m["id"] for m in entry.options[CONF_HOUSEHOLD_MEMBERS] if m["role"] == MEMBER_ROLE_CHILD)
+    assert res_add_c["type"] == "menu" and res_add_c["step_id"] == "household_members"
+    assert "Mia" in res_add_c["description_placeholders"]["members_summary"]
+    assert len(opt._get_members()) == 2
+    child_id = next(m["id"] for m in opt._get_members() if m["role"] == MEMBER_ROLE_CHILD)
 
     await opt.async_step_edit_member({"member_id": child_id})
     res_edit_c = await opt.async_step_edit_child(
         {"name": "Mia", "birthdate": "2020-02-02", "calendars": ["calendar.mia"], "profile": "Turnbeutel sonntags; Essen morgens"}
     )
-    entry.options = res_edit_c["data"]
-    edited = next(m for m in entry.options[CONF_HOUSEHOLD_MEMBERS] if m["id"] == child_id)
+    assert res_edit_c["type"] == "menu" and res_edit_c["step_id"] == "household_members"
+    edited = next(m for m in opt._get_members() if m["id"] == child_id)
     assert "Turnbeutel sonntags" in edited["profile"]
 
     res_add_a = await opt.async_step_add_adult(
         {"name": "Partner", "calendars": ["calendar.partner"], "profile": "Schichtdienst"}
     )
-    entry.options = res_add_a["data"]
-    assert sum(1 for m in entry.options[CONF_HOUSEHOLD_MEMBERS] if m["role"] == MEMBER_ROLE_ADULT) == 2
+    assert res_add_a["type"] == "menu" and res_add_a["step_id"] == "household_members"
+    assert "Partner" in res_add_a["description_placeholders"]["members_summary"]
+    assert sum(1 for m in opt._get_members() if m["role"] == MEMBER_ROLE_ADULT) == 2
 
     res_rm_c = await opt.async_step_remove_member({"member_id": child_id})
-    entry.options = res_rm_c["data"]
-    assert all(m["id"] != child_id for m in entry.options[CONF_HOUSEHOLD_MEMBERS])
+    assert res_rm_c["type"] == "menu" and res_rm_c["step_id"] == "household_members"
+    assert "Mia" not in res_rm_c["description_placeholders"]["members_summary"]
+
+    # Nothing persisted until explicit save_members
+    assert entry.options == {}
+
+    res_save = await opt.async_step_save_members()
+    assert res_save["type"] == "create_entry"
+    saved_members = res_save["data"][CONF_HOUSEHOLD_MEMBERS]
+    assert sum(1 for m in saved_members if m["role"] == MEMBER_ROLE_ADULT) == 2
+    assert all(m["id"] != child_id for m in saved_members)
 
     # Confirm sport_bag_mode is absent from factors_and_profile schema
     factors_form = await opt.async_step_factors_and_profile()

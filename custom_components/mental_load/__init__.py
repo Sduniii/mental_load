@@ -183,7 +183,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Mental Load Analyzer from a ConfigEntry."""
     hass.data.setdefault(DOMAIN, {})
     coordinator = MentalLoadCoordinator(hass, entry)
-    await coordinator.async_seed_from_cache()
+    seeded = await coordinator.async_seed_from_cache()
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
     entry.async_on_unload(entry.add_update_listener(_update_listener))
@@ -199,11 +199,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         else:
             hass.async_create_task(coordinator.async_refresh())
 
-    if getattr(hass, "state", CoreState.running) == CoreState.running:
-        _start_initial_refresh()
+    if not seeded:
+        if getattr(hass, "state", CoreState.running) == CoreState.running:
+            _start_initial_refresh()
+        else:
+            entry.async_on_unload(
+                hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_initial_refresh)
+            )
     else:
-        entry.async_on_unload(
-            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_initial_refresh)
+        _LOGGER.debug(
+            "Mental Load entry %s seeded from cache; skipping immediate LLM refresh on setup/reload",
+            entry.entry_id,
         )
     return True
 

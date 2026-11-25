@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.10.1] — 2026-11-25
+
+### Fixed & Changed
+- **Batched Edits in Household & Persons Menu (`save_members`):** Adding, editing, or removing multiple people now stays inside the **Household & Persons** menu and updates the live preview without saving or reloading after each individual change; a new **Save changes & close** (*„Änderungen speichern & schließen“*) button saves all edits in one step.
+- **No Immediate LLM Regeneration on Cached Reloads:** When reloading or restarting with valid persisted cache entries (`async_seed_from_cache() == True`), `async_setup_entry()` populates all sensors and calendars immediately from cache and skips an immediate background LLM refresh. Updated settings apply on the next scheduled `update_interval` or on a manual `mental_load.refresh` trigger. Cold setups with an empty cache still schedule an initial refresh.
+
 ## [1.10.0] — 2026-11-25
 
 ### Added & Changed

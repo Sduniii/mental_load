@@ -750,6 +750,47 @@ async def test_non_blocking_setup_seeds_cache_immediately(monkeypatch: Any) -> N
     assert today_str in coord.data
     assert coord.data[today_str].score == 55
     assert coord.data[today_str].cached is True
+    # Warm/pre-seeded cache must skip immediate background LLM regeneration on reload
+    assert scheduled == []
+    forward_mock.assert_awaited_once()
+
+
+async def test_cold_setup_schedules_initial_refresh(monkeypatch: Any) -> None:
+    from custom_components.mental_load import async_setup_entry
+    from custom_components.mental_load.const import DOMAIN
+
+    hass = FakeHass()
+    entry = ConfigEntry(
+        entry_id="cold_seed_entry",
+        data={CONF_CALENDARS: ["calendar.google"], CONF_HORIZON_DAYS: 2, CONF_PROVIDER: PROVIDER_HEURISTIC},
+    )
+
+    class _EmptyStore:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def async_load(self) -> dict[str, Any] | None:
+            return None
+
+        async def async_save(self, data: dict[str, Any]) -> None:
+            pass
+
+    monkeypatch.setattr("custom_components.mental_load.coordinator.Store", _EmptyStore)
+
+    scheduled: list[str] = []
+
+    def _fake_bg_task(_hass: Any, coro: Any, name: str) -> None:
+        scheduled.append(name)
+        coro.close()
+
+    entry.async_create_background_task = _fake_bg_task  # type: ignore[attr-defined]
+    entry.async_on_unload = lambda cb: cb  # type: ignore[attr-defined]
+    entry.add_update_listener = lambda fn: fn  # type: ignore[attr-defined]
+    forward_mock = AsyncMock()
+    hass.config_entries = type("CE", (), {"async_forward_entry_setups": forward_mock})()
+
+    ok = await async_setup_entry(hass, entry)
+    assert ok is True
     assert scheduled == [f"{DOMAIN}_initial_refresh_{entry.entry_id}"]
     forward_mock.assert_awaited_once()
 

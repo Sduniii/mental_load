@@ -107,7 +107,8 @@
           "add_adult": "Add Adult",
           "add_child": "Add Child",
           "edit_member": "Edit Person",
-          "remove_member": "Remove Person"
+          "remove_member": "Remove Person",
+          "save_members": "Save changes & close"
         }
       },
       "add_adult": {

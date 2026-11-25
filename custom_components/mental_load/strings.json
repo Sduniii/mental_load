@@ -107,7 +107,8 @@
           "add_adult": "Erwachsenen hinzufügen",
           "add_child": "Kind hinzufügen",
           "edit_member": "Person bearbeiten",
-          "remove_member": "Person entfernen"
+          "remove_member": "Person entfernen",
+          "save_members": "Änderungen speichern & schließen"
         }
       },
       "add_adult": {

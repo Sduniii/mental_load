@@ -351,6 +351,7 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
         self._editing_member_id: str | None = None
+        self._members: list[dict[str, Any]] | None = None
 
     def _cur(self, key: str, default: Any = None) -> Any:
         if key in self._config_entry.options:
@@ -363,7 +364,9 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
         return merged
 
     def _get_members(self) -> list[dict[str, Any]]:
-        return normalize_household_members(self._merged_config())
+        if self._members is None:
+            self._members = normalize_household_members(self._merged_config())
+        return self._members
 
     def _save_section(self, user_input: dict[str, Any]):
         updated = dict(self._config_entry.options)
@@ -407,7 +410,7 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
         lang = str(self._cur(CONF_LANGUAGE, DEFAULT_LANGUAGE))
         return self.async_show_menu(
             step_id="household_members",
-            menu_options=["add_adult", "add_child", "edit_member", "remove_member"],
+            menu_options=["add_adult", "add_child", "edit_member", "remove_member", "save_members"],
             description_placeholders={
                 "members_summary": _format_members_summary(members, lang),
             },
@@ -418,7 +421,7 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             members = self._get_members()
             members.append(_build_member_record(MEMBER_ROLE_ADULT, user_input))
-            return self._save_members(members)
+            return await self.async_step_household_members()
         return self.async_show_form(
             step_id="add_adult",
             data_schema=_build_member_form_schema(MEMBER_ROLE_ADULT),
@@ -429,7 +432,7 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             members = self._get_members()
             members.append(_build_member_record(MEMBER_ROLE_CHILD, user_input))
-            return self._save_members(members)
+            return await self.async_step_household_members()
         return self.async_show_form(
             step_id="add_child",
             data_schema=_build_member_form_schema(MEMBER_ROLE_CHILD),
@@ -475,7 +478,7 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
                 user_input,
                 member_id=current["id"],
             )
-            return self._save_members(members)
+            return await self.async_step_household_members()
         return self.async_show_form(
             step_id="edit_adult",
             data_schema=_build_member_form_schema(MEMBER_ROLE_ADULT, current),
@@ -492,7 +495,7 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
                 user_input,
                 member_id=current["id"],
             )
-            return self._save_members(members)
+            return await self.async_step_household_members()
         return self.async_show_form(
             step_id="edit_child",
             data_schema=_build_member_form_schema(MEMBER_ROLE_CHILD, current),
@@ -509,8 +512,8 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
             if target is not None and target["role"] == MEMBER_ROLE_ADULT and len(adults) <= 1:
                 errors["base"] = "cannot_remove_last_adult"
             elif target is not None:
-                updated_members = [m for m in members if m["id"] != target_id]
-                return self._save_members(updated_members)
+                self._members = [m for m in members if m["id"] != target_id]
+                return await self.async_step_household_members()
 
         opts = self._member_options(members)
         return self.async_show_form(
@@ -524,6 +527,10 @@ class MentalLoadOptionsFlow(config_entries.OptionsFlow):
             ),
             errors=errors,
         )
+
+    async def async_step_save_members(self, user_input: dict[str, Any] | None = None):
+        """Persist all batched household member changes at once."""
+        return self._save_members(list(self._get_members()))
 
     async def async_step_llm_settings(self, user_input: dict[str, Any] | None = None):
         """Edit AI provider, API key, model, and temperature."""

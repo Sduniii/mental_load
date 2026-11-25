@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "mental_load"
-VERSION = "1.10.0"
+VERSION = "1.10.1"
 
 URL_BASE = "/mental_load_card"
 JSMODULES = [
