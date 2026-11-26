@@ -116,6 +116,19 @@ def make_checklist_item_uid(task_uid: str, step_index: int) -> str:
     return f"{task_uid}:step:{step_index}"
 
 
+def make_stable_task_key(task: HiddenTask) -> str:
+    """Create a wording-tolerant identity key for a HiddenTask across AI refreshes."""
+    parent_summary = re.sub(r"\s+", " ", (task.parent_event_summary or "").strip().lower())
+    category = (task.category or "prep").strip().lower()
+    parent_date = task.parent_event_date or task.scheduled_date or task.start.date().isoformat()
+    norm_title = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", (task.title or "").lower())).strip()
+    if category == "project_step" and parent_summary:
+        return f"proj:{parent_summary}|{norm_title}"
+    if parent_summary:
+        return f"ev:{parent_date}|{parent_summary}|{category}"
+    return f"free:{parent_date}|{category}|{norm_title}"
+
+
 class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
     """Coordinates calendar reading, AI scoring, caching, todo push, and reactions."""
 
@@ -143,7 +156,10 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         self._cache: dict[str, dict[str, Any]] = {}
         self.feedback_history: list[FeedbackEntry] = []
         self._pushed_todo_uids: set[str] = set()
+        self._pushed_todo_keys: set[str] = set()
+        self._pushed_uid_to_key: dict[str, str] = {}
         self.completed_item_uids: set[str] = set()
+        self.completed_task_keys: set[str] = set()
         self._synced_calendar_uids: set[str] = set()
         self.ical_token: str = secrets.token_urlsafe(24)
         self._notified_thresholds: dict[str, str] = {}
@@ -174,7 +190,12 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             for item in stored.get("feedback_history", [])
         ]
         self._pushed_todo_uids = set(stored.get("pushed_todo_uids", []))
+        self._pushed_todo_keys = set(stored.get("pushed_todo_keys", []))
+        self._pushed_uid_to_key = {
+            str(k): str(v) for k, v in (stored.get("pushed_uid_to_key") or {}).items()
+        }
         self.completed_item_uids = set(stored.get("completed_item_uids", []))
+        self.completed_task_keys = set(stored.get("completed_task_keys", []))
         self._synced_calendar_uids = set(stored.get("synced_calendar_uids", []))
         if stored.get("ical_token"):
             self.ical_token = str(stored["ical_token"])
@@ -202,6 +223,7 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
 
         if seeded:
             self._raw_analyses = dict(seeded)
+            self._apply_dynamic_completion_relief(seeded)
         payload = seeded if seeded else {}
         if hasattr(self, "async_set_updated_data"):
             self.async_set_updated_data(payload)
@@ -209,14 +231,36 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             self.data = payload
         return bool(seeded)
 
+    @staticmethod
+    def _prune_old_task_keys(keys: set[str], cutoff_date: str) -> set[str]:
+        """Keep undated project keys and date-scoped keys from the last 14 days."""
+        kept: set[str] = set()
+        for key in keys:
+            if key.startswith(("ev:", "free:")):
+                date_part = key.split(":", 1)[1].split("|", 1)[0]
+                if len(date_part) == 10 and date_part < cutoff_date:
+                    continue
+            kept.add(key)
+        return kept
+
     async def _async_save_state(self) -> None:
         """Persist cache, feedback memory, and deduplication markers."""
+        cutoff = (dt_util.now().date() - datetime.timedelta(days=14)).isoformat()
+        self.completed_task_keys = self._prune_old_task_keys(self.completed_task_keys, cutoff)
+        self._pushed_todo_keys = self._prune_old_task_keys(self._pushed_todo_keys, cutoff)
+        active_keys = self.completed_task_keys | self._pushed_todo_keys
+        self._pushed_uid_to_key = {
+            uid: skey for uid, skey in self._pushed_uid_to_key.items() if skey in active_keys
+        }
         await self._store.async_save(
             {
                 "cache": self._cache,
                 "feedback_history": [f.to_dict() for f in self.feedback_history[-MAX_FEEDBACK_HISTORY:]],
                 "pushed_todo_uids": sorted(self._pushed_todo_uids),
+                "pushed_todo_keys": sorted(self._pushed_todo_keys),
+                "pushed_uid_to_key": self._pushed_uid_to_key,
                 "completed_item_uids": sorted(self.completed_item_uids),
+                "completed_task_keys": sorted(self.completed_task_keys),
                 "synced_calendar_uids": sorted(self._synced_calendar_uids),
                 "ical_token": self.ical_token,
                 "notified_thresholds": self._notified_thresholds,
@@ -370,6 +414,14 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             open_project_count=self._last_open_project_count,
             event_counts=self._last_day_event_counts,
         )
+
+        if config.get(CONF_TARGET_TODO_ENTITY):
+            synced_done = await self._async_sync_from_target_todo(
+                config[CONF_TARGET_TODO_ENTITY],
+                results,
+            )
+            if synced_done:
+                self._apply_dynamic_completion_relief(results)
 
         if config.get(CONF_AUTO_PUSH_TODO) and config.get(CONF_TARGET_TODO_ENTITY):
             await self.async_push_hidden_tasks_to_todo(
@@ -731,7 +783,12 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
 
         pushed_count = 0
         for task in day_analysis.hidden_tasks:
-            if task.uid in self._pushed_todo_uids:
+            skey = make_stable_task_key(task)
+            if (
+                task.uid in self._pushed_todo_uids
+                or skey in self._pushed_todo_keys
+                or self._is_task_completed(task)
+            ):
                 continue
             item_name = f"{task.title} ({task.parent_event_summary})" if task.parent_event_summary else task.title
             checklist_lines = "\n".join(f"- [ ] {step}" for step in task.checklist)
@@ -756,6 +813,8 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                         blocking=True,
                     )
                     self._pushed_todo_uids.add(task.uid)
+                    self._pushed_todo_keys.add(skey)
+                    self._pushed_uid_to_key[task.uid] = skey
                     pushed_count += 1
                     last_err = None
                     break
@@ -775,6 +834,86 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
         if save_after and pushed_count > 0:
             await self._async_save_state()
         return pushed_count
+
+    async def _async_sync_from_target_todo(
+        self,
+        target_todo: str,
+        analyses: dict[str, DayLoadAnalysis],
+    ) -> bool:
+        """Pull completed/existing [ML-<uid>] items back from target_todo without touching prompts."""
+        if not target_todo:
+            return False
+        await self.async_load_state()
+        try:
+            resp = await self.hass.services.async_call(
+                "todo",
+                "get_items",
+                {"entity_id": target_todo, "status": ["completed", "needs_action"]},
+                blocking=True,
+                return_response=True,
+            )
+        except Exception:  # noqa: BLE001
+            return False
+
+        items = (resp or {}).get(target_todo, {}).get("items", []) if isinstance(resp, dict) else []
+        if not items:
+            return False
+
+        tasks_by_uid = {
+            task.uid: task
+            for day in analyses.values()
+            for task in day.hidden_tasks
+        }
+        changed = False
+        for item in items:
+            desc = str(item.get("description") or "")
+            match = re.search(r"\[ML-(?!TASK-|BADGE-)([^\]]+)\]", desc)
+            if not match:
+                continue
+            uid = match.group(1).strip()
+            status = str(item.get("status") or "").strip().lower()
+            task = tasks_by_uid.get(uid)
+            if task is not None:
+                skey = make_stable_task_key(task)
+                self._pushed_uid_to_key[uid] = skey
+            else:
+                skey = self._pushed_uid_to_key.get(uid, "")
+
+            if status == "completed":
+                self._pushed_todo_uids.add(uid)
+                if skey:
+                    if skey not in self.completed_task_keys:
+                        self.completed_task_keys.add(skey)
+                        changed = True
+                    self._pushed_todo_keys.add(skey)
+                if task is not None and self._mark_task_completed(task):
+                    changed = True
+            else:
+                self._pushed_todo_uids.add(uid)
+                if skey:
+                    self._pushed_todo_keys.add(skey)
+        return changed
+
+    def _is_task_completed(self, task: HiddenTask) -> bool:
+        """Return True if a HiddenTask is completed by stable key or checklist UIDs."""
+        if make_stable_task_key(task) in self.completed_task_keys:
+            return True
+        return self._task_completion_ratio(task.uid, task.checklist) >= 1.0
+
+    def _mark_task_completed(self, task: HiddenTask) -> bool:
+        """Mark a HiddenTask completed across both stable key and current checklist UIDs."""
+        changed = False
+        skey = make_stable_task_key(task)
+        if skey not in self.completed_task_keys:
+            self.completed_task_keys.add(skey)
+            changed = True
+        step_count = len(task.checklist) if task.checklist else 1
+        for idx in range(step_count):
+            step_uid = make_checklist_item_uid(task.uid, idx)
+            if step_uid not in self.completed_item_uids:
+                self.completed_item_uids.add(step_uid)
+                changed = True
+        return changed
 
     def _task_completion_ratio(self, task_uid: str, checklist: list[str]) -> float:
         """Return 0.0..1.0 ratio of completed steps for a hidden task."""
@@ -1036,6 +1175,8 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             day.base_score = base
             relief = 0
             for task in day.hidden_tasks:
+                if make_stable_task_key(task) in self.completed_task_keys:
+                    self._mark_task_completed(task)
                 ratio = self._task_completion_ratio(task.uid, task.checklist)
                 if ratio > 0:
                     relief += round(task.load_contribution * 0.6 * ratio)
@@ -1072,6 +1213,20 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             self.completed_item_uids.add(item_uid)
         else:
             self.completed_item_uids.discard(item_uid)
+
+        owning_task_uid = item_uid.rsplit(":step:", 1)[0] if ":step:" in item_uid else ""
+        if owning_task_uid:
+            for source_map in (self.data or {}, self._raw_analyses or {}):
+                for day in source_map.values():
+                    for task in day.hidden_tasks:
+                        if task.uid == owning_task_uid:
+                            skey = make_stable_task_key(task)
+                            if self._task_completion_ratio(task.uid, task.checklist) >= 1.0:
+                                self.completed_task_keys.add(skey)
+                            else:
+                                self.completed_task_keys.discard(skey)
+                            break
+
         await self._async_save_state()
 
         if self._raw_analyses:
@@ -1149,6 +1304,8 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
                     _LOGGER.error("Failed syncing day badge to %s: %s", target_cal, err)
 
             for task in day.hidden_tasks:
+                if self._is_task_completed(task):
+                    continue
                 task_key = f"task:{target_cal}:{task.uid}"
                 task_already_present = (
                     task.uid in present_task_uids
@@ -1222,7 +1379,12 @@ class MentalLoadCoordinator(DataUpdateCoordinator[dict[str, DayLoadAnalysis]]):
             return 0, None, None
 
         expected_badges = {(d.date.isoformat(), d.badge_summary) for d in source_map.values()}
-        expected_task_uids = {t.uid for d in source_map.values() for t in d.hidden_tasks}
+        expected_task_uids = {
+            t.uid
+            for d in source_map.values()
+            for t in d.hidden_tasks
+            if not self._is_task_completed(t)
+        }
         present_badges: set[tuple[str, str]] = set()
         present_task_uids: set[str] = set()
         deleted = 0

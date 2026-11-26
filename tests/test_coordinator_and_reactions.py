@@ -193,14 +193,19 @@ async def test_toggle_checklist_and_external_calendar_sync_guard() -> None:
     blocked = await coord.async_sync_to_external_calendar("calendar.google_source")
     assert blocked == 0
 
-    # Writing to dedicated secondary Google Calendar succeeds & deduplicates
-    synced = await coord.async_sync_to_external_calendar("calendar.google_mental_load")
-    assert synced == 2  # 1 day badge + 1 hidden task
+    # Writing to dedicated secondary Google Calendar skips completed hidden task (only day badge syncs)
+    synced_done = await coord.async_sync_to_external_calendar("calendar.google_mental_load")
+    assert synced_done == 1  # 1 day badge only; completed hidden task omitted
+
+    # Un-toggling reopens the task, so it syncs to the external calendar cleanly & deduplicates
+    await coord.async_toggle_checklist_item("task_uid_1:step:0", completed=False)
+    synced_open = await coord.async_sync_to_external_calendar("calendar.google_mental_load")
+    assert synced_open == 1  # 1 reopened hidden task (badge already synced)
     create_calls = [c for c in hass.services.calls if c[0] == "calendar" and c[1] == "create_event"]
     assert len(create_calls) == 2
     assert create_calls[0][2]["entity_id"] == "calendar.google_mental_load"
 
-    # Second sync does not create duplicates
+    # Subsequent sync does not create duplicates
     assert await coord.async_sync_to_external_calendar("calendar.google_mental_load") == 0
 
 
@@ -1065,3 +1070,205 @@ async def test_member_calendars_and_boot_cache_guard(monkeypatch: Any) -> None:
     returned = await coord._async_update_data()
     assert returned is existing
     assert coord._last_calendar_fetch_failed is True
+
+
+async def test_completed_task_survives_ai_rewording_without_repush_or_extra_tokens() -> None:
+    from custom_components.mental_load.coordinator import make_checklist_item_uid, make_stable_task_key
+    from custom_components.mental_load.models import DayLoadAnalysis, HiddenTask
+
+    hass = FakeHass()
+    day = datetime.date(2026, 11, 26)
+    tz = datetime.timezone(datetime.timedelta(hours=1))
+    hass.services.set_response("calendar", "get_events", {"calendar.google": {"events": []}})
+
+    entry = ConfigEntry(
+        entry_id="stable_done_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google"],
+            CONF_HORIZON_DAYS: 1,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_TARGET_TODO_ENTITY: "todo.zuhause",
+            CONF_TARGET_CALENDAR_ENTITY: "calendar.mental_load_2",
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+
+    # Same event + category, different AI-worded title & different uid on re-analysis
+    orig_task = HiddenTask(
+        uid="uid_v1",
+        parent_event_summary="Schwimmen",
+        title="🎒 Schwimmbeutel packen",
+        category="packing",
+        start=datetime.datetime(2026, 11, 26, 7, 30, tzinfo=tz),
+        end=datetime.datetime(2026, 11, 26, 7, 45, tzinfo=tz),
+        load_contribution=20,
+        checklist=["Badehose einpacken"],
+        parent_event_date=day.isoformat(),
+        scheduled_date=day.isoformat(),
+    )
+    reworded_task = HiddenTask(
+        uid="uid_v2_reworded",
+        parent_event_summary="Schwimmen",
+        title="🎒 Badesachen & Handtuch einpacken",
+        category="packing",
+        start=datetime.datetime(2026, 11, 26, 7, 30, tzinfo=tz),
+        end=datetime.datetime(2026, 11, 26, 7, 45, tzinfo=tz),
+        load_contribution=20,
+        checklist=["Handtuch einpacken"],
+        parent_event_date=day.isoformat(),
+        scheduled_date=day.isoformat(),
+    )
+    assert make_stable_task_key(orig_task) == make_stable_task_key(reworded_task)
+
+    coord.data = {
+        day.isoformat(): DayLoadAnalysis(
+            date=day,
+            score=40,
+            base_score=40,
+            level="medium",
+            badge_summary="🟡 40%",
+            reasoning="Schwimmen",
+            factor_breakdown={},
+            hidden_tasks=[orig_task],
+        )
+    }
+
+    fp_before = coord._compute_day_fingerprint(day.isoformat(), [], {}, entry.data, include_live_context=True)
+    await coord.async_toggle_checklist_item(make_checklist_item_uid("uid_v1", 0), completed=True)
+    fp_after = coord._compute_day_fingerprint(day.isoformat(), [], {}, entry.data, include_live_context=True)
+    assert fp_before == fp_after
+
+    # Simulate AI returning reworded task with a new UID
+    rebalanced = coord._rebalance_and_score_horizon(
+        {
+            day.isoformat(): DayLoadAnalysis(
+                date=day,
+                score=40,
+                base_score=40,
+                level="medium",
+                badge_summary="🟡 40%",
+                reasoning="Schwimmen",
+                factor_breakdown={},
+                hidden_tasks=[reworded_task],
+            )
+        },
+        day,
+        tz,
+    )
+    assert make_checklist_item_uid("uid_v2_reworded", 0) in coord.completed_item_uids
+    assert rebalanced[day.isoformat()].relief_points > 0
+
+    pushed = await coord.async_push_hidden_tasks_to_todo(
+        target_date=day.isoformat(),
+        todo_entity="todo.zuhause",
+        analyses=rebalanced,
+        save_after=False,
+    )
+    assert pushed == 0
+
+    hass.services.calls.clear()
+    await coord.async_sync_to_external_calendar("calendar.mental_load_2", analyses=rebalanced, save_after=False)
+    created_summaries = [
+        c[2]["summary"] for c in hass.services.calls if c[0] == "calendar" and c[1] == "create_event"
+    ]
+    assert all("Badesachen" not in s and "Schwimmbeutel" not in s for s in created_summaries)
+
+
+async def test_completed_item_in_target_todo_syncs_back_and_blocks_recreation() -> None:
+    from custom_components.mental_load.coordinator import make_checklist_item_uid
+    from custom_components.mental_load.models import DayLoadAnalysis, HiddenTask
+
+    hass = FakeHass()
+    day = datetime.date(2026, 11, 26)
+    tz = datetime.timezone(datetime.timedelta(hours=1))
+
+    task_v1 = HiddenTask(
+        uid="todo_uid_1",
+        parent_event_summary="Zahnarzt",
+        title="🧠 Unterlagen bereitlegen",
+        category="prep",
+        start=datetime.datetime(2026, 11, 26, 8, 0, tzinfo=tz),
+        end=datetime.datetime(2026, 11, 26, 8, 15, tzinfo=tz),
+        load_contribution=15,
+        checklist=["Versichertenkarte"],
+        parent_event_date=day.isoformat(),
+        scheduled_date=day.isoformat(),
+    )
+    task_v2 = HiddenTask(
+        uid="todo_uid_2",
+        parent_event_summary="Zahnarzt",
+        title="🧠 Impfpass & Karte einpacken",
+        category="prep",
+        start=datetime.datetime(2026, 11, 26, 8, 0, tzinfo=tz),
+        end=datetime.datetime(2026, 11, 26, 8, 15, tzinfo=tz),
+        load_contribution=15,
+        checklist=["Karte einpacken"],
+        parent_event_date=day.isoformat(),
+        scheduled_date=day.isoformat(),
+    )
+
+    hass.services.set_response(
+        "todo",
+        "get_items",
+        {
+            "todo.zuhause": {
+                "items": [
+                    {
+                        "summary": "🧠 Unterlagen bereitlegen (Zahnarzt)",
+                        "status": "completed",
+                        "description": "- [ ] Versichertenkarte\n\n[ML-todo_uid_1]",
+                    }
+                ]
+            }
+        },
+    )
+
+    entry = ConfigEntry(
+        entry_id="todo_backsync_entry",
+        data={
+            CONF_CALENDARS: ["calendar.google"],
+            CONF_HORIZON_DAYS: 1,
+            CONF_PROVIDER: PROVIDER_HEURISTIC,
+            CONF_AUTO_PUSH_TODO: True,
+            CONF_TARGET_TODO_ENTITY: "todo.zuhause",
+        },
+    )
+    coord = MentalLoadCoordinator(hass, entry)
+    analyses = {
+        day.isoformat(): DayLoadAnalysis(
+            date=day,
+            score=35,
+            base_score=35,
+            level="medium",
+            badge_summary="🟡 35%",
+            reasoning="Zahnarzt",
+            factor_breakdown={},
+            hidden_tasks=[task_v1],
+        )
+    }
+
+    synced = await coord._async_sync_from_target_todo("todo.zuhause", analyses)
+    assert synced is True
+    assert make_checklist_item_uid("todo_uid_1", 0) in coord.completed_item_uids
+
+    coord._apply_dynamic_completion_relief(analyses)
+    assert analyses[day.isoformat()].relief_points > 0
+
+    pushed = await coord.async_push_hidden_tasks_to_todo(
+        target_date=day.isoformat(),
+        todo_entity="todo.zuhause",
+        analyses={
+            day.isoformat(): DayLoadAnalysis(
+                date=day,
+                score=35,
+                base_score=35,
+                level="medium",
+                badge_summary="🟡 35%",
+                reasoning="Zahnarzt",
+                factor_breakdown={},
+                hidden_tasks=[task_v2],
+            )
+        },
+        save_after=False,
+    )
+    assert pushed == 0

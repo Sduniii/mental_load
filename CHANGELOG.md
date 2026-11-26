@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.10.2] — 2026-11-26
+
+### Fixed & Changed
+- **No Recreation of Completed Tasks (`make_stable_task_key`):** Hidden tasks are now tracked by a wording-tolerant identity key (`ev:<date>|<event>|<category>`, `proj:<todo>|<title>`, `free:<date>|<category>|<title>`). Checked-off tasks stay completed and are never duplicated into To-Do lists or external calendars even when the AI rewords a task on refresh — adding **0 extra LLM tokens** and **0 cache invalidations**.
+- **Bidirectional Completion Sync from Target To-Do List:** During refreshes, Mental Load reads `completed` items carrying `[ML-<uid>]` back from `target_todo_entity` (`_async_sync_from_target_todo`), automatically applies score relief, and prevents re-creating or re-syncing completed tasks.
+
 ## [1.10.1] — 2026-11-25
 
 ### Fixed & Changed
